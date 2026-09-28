@@ -164,7 +164,7 @@ function palette(accent, k, metals) {
     G: hue(0.62, 1.45),                                                // glare: blooms in the tower's hue
     S: A.clone().multiplyScalar(0.42),                                 // soft lit panels (large colored areas)
     T: A.clone().multiplyScalar(0.6),                                  // dimmer second tone of the same hue
-    W: _white.clone().lerp(a.clone().multiplyScalar(1 / Math.max(a.r, a.g, a.b)), 0.3), // white-hot core
+    W: _white.clone().lerp(a.clone().multiplyScalar(1 / m0), 0.3),   // white-hot core
     D: tint(d, k), K: tint(kc, k), P: tint(p, k), L: tint(l, k * 0.8), H: tint(h, k * 0.6),
   };
 }
@@ -193,8 +193,8 @@ function polyFrame(g, n, r, y, w, h, col, rot = 0) {
 }
 
 // ---- shared tower sub-builders
-// Launch bay in a local frame (local +x = radially outward): dark recessed pad, glowing corner brackets,
-// low side rails with runway lights and a parked drone. Returns the launch point above the pad.
+// Launch bay in a local frame (local +x = radially outward): softly lit pad, glowing corner markers,
+// low side rails with runway lights and a parked drone (in the carrier's color). Returns the launch point above the pad.
 function launchPad(F, m, g, s, P, deck, drone, droneScale, tint) {
   F.g(box(s, 0.014, s), P.S, [0, deck + 0.007, 0]);
   const e = s / 2 - 0.018;
@@ -252,10 +252,10 @@ const BUILDERS = {
     const iw = L >= 3 ? 0.42 : 0.48;
     inlayBox(bm, bg, iw, iw, top, 0.03, P.L, P.A);
     if (L >= 2) for (const [sx, sz] of CORNERS) {
-      const h = top + 0.03, x = sx * 0.245, z = sz * 0.245;
+      const h = top - 0.01, x = sx * 0.245, z = sz * 0.245;
       bm.add(box(0.09, h, 0.09), P.K, [x, h / 2, z]);
       bm.add(box(0.1, 0.02, 0.1), P.L, [x, h + 0.01, z]);
-      bg.add(box(0.06, 0.012, 0.06), U ? P.W : P.A, [x, h + 0.022, z]);
+      bg.add(box(0.06, 0.012, 0.06), U ? P.G : P.A, [x, h + 0.016, z]);
       if (L >= 3) bg.add(box(0.016, h * 0.7, 0.016), P.A, [sx * 0.29, h * 0.45, sz * 0.29]);
     }
     if (E) {
@@ -268,10 +268,7 @@ const BUILDERS = {
         bg.add(cyl(0.028, 0.028, 0.012, 8), U ? P.W : P.A, [s * 0.3, 0.146, z]);
       }
     }
-    if (U) {
-      bg.add(box(0.612, 0.012, 0.612), P.A, [0, 0.008, 0]);
-      for (const [sx, sz] of CORNERS) bg.add(octa(0.036), P.G, [sx * 0.245, top + 0.15, sz * 0.245], null, [1, 1.8, 1]);
-    }
+    if (U) bg.add(box(0.61, 0.012, 0.61), P.G, [0, 0.008, 0]);
 
     out.head.y = top;
     if (spec === 'a') {
@@ -280,13 +277,13 @@ const BUILDERS = {
       hm.add(box(w, 0.2, 0.3), P.K, [0, 0.11, -0.04]);
       hm.add(box(w - 0.06, 0.05, 0.24), P.L, [0, 0.235, -0.05]);
       hg.add(box(w - 0.1, 0.012, 0.18), P.S, [0, 0.262, -0.05]);
-      hm.add(box(w - 0.04, 0.12, 0.05), P.P, [0, 0.12, 0.12]);
+      hm.add(box(w - 0.04, 0.12, 0.05), P.P, [0, 0.14, 0.12]);
       sym(hg, () => box(0.012, 0.04, 0.22), P.A, [w / 2 + 0.004, 0.13, -0.04]);
       const dx = w / 2 + 0.065;
       for (const s of U ? [-1, 1] : [-1]) {
-        hm.add(cyl(0.1, 0.1, 0.11, 12), P.P, [s * dx, 0.12, -0.05], rz(PI / 2));
-        hg.add(cyl(0.103, 0.103, 0.03, 12, true), P.A, [s * dx, 0.12, -0.05], rz(PI / 2));
-        hg.add(cyl(0.055, 0.055, 0.116, 10), P.S, [s * dx, 0.12, -0.05], rz(PI / 2));
+        hm.add(cyl(0.1, 0.1, 0.11, 12), P.P, [s * dx, 0.145, -0.05], rz(PI / 2));
+        hg.add(cyl(0.103, 0.103, 0.03, 12, true), P.A, [s * dx, 0.145, -0.05], rz(PI / 2));
+        hg.add(cyl(0.055, 0.055, 0.116, 10), P.S, [s * dx, 0.145, -0.05], rz(PI / 2));
       }
       const n = U ? 8 : 6, rr = U ? 0.074 : 0.06, bl = U ? 0.5 : 0.42;
       const bz = 0.18 + (bl - 0.42) / 2, fz = 0.39 + (bl - 0.42);
@@ -300,14 +297,14 @@ const BUILDERS = {
       sg.add(cyl(rr + 0.038, rr + 0.038, 0.022, 12, true), P.A, [0, 0, 0.05], rx(PI / 2));
       sg.add(cyl(rr + 0.04, rr + 0.04, 0.02, 12, true), P.A, [0, 0, fz], rx(PI / 2));
       if (U) {
-        for (const z of [0.16, 0.24]) sg.add(torus(rr + 0.062, 0.012, 4, 20), P.G, [0, 0, z + (bl - 0.42)]);
+        for (const z of [0.16, 0.24]) sg.add(torus(rr + 0.05, 0.012, 4, 20), P.G, [0, 0, z + (bl - 0.42)]);
         for (const x of [-0.08, 0, 0.08]) {
           hm.add(box(0.022, 0.07, 0.2), P.L, [x, 0.29, -0.06]);
           hg.add(box(0.024, 0.012, 0.18), P.A, [x, 0.328, -0.06]);
         }
       }
-      out.spin = { pos: [0, 0.12, 0.14], axis: 'z', speed: 0 };
-      out.head.muzzle = [0, 0.12, 0.14 + fz + 0.06];
+      out.spin = { pos: [0, 0.15, 0.14], axis: 'z', speed: 0 };
+      out.head.muzzle = [0, 0.15, 0.14 + fz + 0.06];
       return;
     }
     if (spec === 'b') {
@@ -351,8 +348,8 @@ const BUILDERS = {
       }
     }
     if (L >= 2) {
-      sym(hm, () => box(0.06, 0.14, 0.22), P.P, [w / 2 + 0.03, 0.1, -0.05]);
-      sym(hg, () => box(0.064, 0.014, 0.16), P.A, [w / 2 + 0.03, 0.172, -0.05]);
+      sym(hm, () => box(0.06, 0.13, 0.22), P.P, [w / 2 + 0.03, 0.115, -0.05]);
+      sym(hg, () => box(0.064, 0.014, 0.16), P.A, [w / 2 + 0.03, 0.182, -0.05]);
     }
     if (L >= 3) {
       hm.add(cyl(0.008, 0.008, 0.16, 4), P.H, [0.1, 0.32, -0.12]);
@@ -481,19 +478,19 @@ const BUILDERS = {
     const nCr = U ? 6 : L >= 3 ? 6 : L >= 2 ? 3 : 0;
     for (let i = 0; i < nCr; i++) {
       const a = HX + (nCr === 3 ? i * 2 : i) * (PI / 3);
-      const big = U ? 1.35 : L >= 3 ? 1.1 : 1;
-      bg.add(octa(0.042 * big), i % 2 && nCr === 6 ? ICE2 : ICE, polar(a, 0.315, 0.1 + 0.04 * big), aimY([0, 0, 0], [Math.sin(a) * 0.4, 1, Math.cos(a) * 0.4]), [1, 2.5, 1]);
+      const big = U ? 1.25 : L >= 3 ? 1.1 : 1;
+      bg.add(octa(0.036 * big), i % 2 && nCr === 6 ? ICE2 : ICE, polar(a, 0.318, 0.1), aimY([0, 0, 0], [Math.sin(a) * 0.65, 1, Math.cos(a) * 0.65]), [1, 2.2, 1]);
     }
     if (E) for (let i = 0; i < 3; i++) {
       // frost vents (a) / field emitters (b) on the three back faces
       const a = PI + (i - 1) * (PI / 3) * 1.0 + (spec === 'b' ? PI / 3 : 0);
       const p = polar(a, 0.265, 0.12);
       bm.add(cyl(0.035, 0.045, 0.1, 6), P.H, p);
-      bg.add(cyl(0.028, 0.028, 0.012, 6), P.A, [p[0], 0.176, p[2]]);
+      bg.add(cyl(0.028, 0.028, 0.012, 6), U ? P.G : P.A, [p[0], 0.176, p[2]]);
     }
     if (U) {
       bg.add(torus(0.4, 0.01, 3, 36), P.A, [0, 0.014, 0], rx(PI / 2));
-      for (let i = 0; i < 6; i++) {
+      if (spec === 'b') for (let i = 0; i < 6; i++) {
         const a = i * (PI / 3);
         bg.add(octa(0.03), P.G, polar(a, 0.38, 0.34 + (i % 2) * 0.06), aimY([0, 0, 0], [Math.sin(a) * 0.5, 1, Math.cos(a) * 0.5]), [1, 2.2, 1]);
       }
@@ -527,34 +524,43 @@ const BUILDERS = {
       return;
     }
     // frost cannon: hex emitter body, flared nozzle forward, crystal on top
-    const big = spec === 'a' ? (U ? 1.55 : 1.4) : L >= 3 ? 1.2 : L >= 2 ? 1.1 : 1;
     hm.add(cyl(0.15, 0.18, 0.15, 6), P.P, [0, 0.075, -0.02], ry(HX));
     hm.add(cyl(0.12, 0.15, 0.05, 6), P.L, [0, 0.175, -0.02], ry(HX));
     hg.add(cyl(0.183, 0.183, 0.016, 6, true), P.A, [0, 0.03, -0.02], ry(HX));
-    const nr = spec === 'a' ? 0.1 : 0.085;
-    hm.add(cyl(nr, 0.05, 0.18, 6), P.H, [0, 0.09, 0.2], [PI / 2, HX, 0]);
-    hg.add(cyl(nr * 0.8, nr * 0.8, 0.012, 6), P.A, [0, 0.09, 0.291], [PI / 2, HX, 0]);
-    if (L >= 3 || spec) hg.add(cyl(nr * 0.75 + 0.012, nr * 0.75 + 0.012, 0.02, 6, true), P.A, [0, 0.09, 0.22], [PI / 2, HX, 0]);
+    const noz = [PI / 2, HX, 0];
+    if (spec === 'a') {
+      // absolute zero: heavy frost cannon (twin barrels at the ultimate) under a crown of crystals
+      const xs = U ? [-0.08, 0.08] : [0];
+      const br = U ? 0.058 : 0.07;
+      for (const x of xs) {
+        hm.add(cyl(br, br * 0.8, 0.26, 6), P.H, [x, 0.13, 0.23], noz);
+        hm.add(cyl(br * 1.3, br, 0.05, 6), P.L, [x, 0.13, 0.385], noz);
+        hg.add(cyl(br * 1.05, br * 1.05, 0.012, 6), P.G, [x, 0.13, 0.411], noz);
+        for (const z of [0.17, 0.27]) hg.add(cyl(br + 0.012, br + 0.012, 0.022, 6, true), P.A, [x, 0.13, z], noz);
+      }
+      const big = U ? 1.45 : 1.3, cy = 0.2 + 0.09 * big * 2.2;
+      crystal(hg, big, [0, cy, -0.04], null, CORE);
+      const n = U ? 5 : 3;
+      for (let i = 0; i < n; i++) {
+        const a = PI + (i - (n - 1) / 2) * (U ? 0.75 : 1.1);
+        const t = aimY([0, 0, 0], [Math.sin(a) * 0.55, 1, Math.cos(a) * 0.55]);
+        crystal(hg, U ? 0.75 : 0.65, polar(a, 0.11, 0.24).map((v, k) => (k === 2 ? v - 0.04 : v)), t, ICE2);
+      }
+      hg.add(torus(0.17, 0.012, 4, 24), P.A, [0, 0.205, -0.04], rx(PI / 2));
+      if (U) hg.add(torus(0.23, 0.009, 3, 30), P.G, [0, 0.4, -0.04], rx(PI / 2));
+      out.head.muzzle = [0, 0.13, 0.42];
+      return;
+    }
+    const big = L >= 3 ? 1.2 : L >= 2 ? 1.1 : 1;
+    const nr = 0.085;
+    hm.add(cyl(nr, 0.05, 0.18, 6), P.H, [0, 0.13, 0.2], noz);
+    hg.add(cyl(nr * 0.8, nr * 0.8, 0.012, 6), P.A, [0, 0.13, 0.291], noz);
+    if (L >= 3) hg.add(cyl(nr * 0.75 + 0.012, nr * 0.75 + 0.012, 0.02, 6, true), P.A, [0, 0.13, 0.22], noz);
     const cy = 0.2 + 0.09 * big * 2.2;
     crystal(hg, big, [0, cy, -0.02], null, CORE);
-    if (L >= 2 || spec) {
-      const ss = spec === 'a' ? (U ? 0.85 : 0.7) : 0.55;
-      for (const s of [-1, 1]) crystal(hg, ss, [s * 0.13, 0.2 + 0.05 * ss * 2.2, -0.05], [0, 0, -s * 0.45], ICE2);
-    }
-    if (L >= 3 || spec) hg.add(torus(0.19, 0.012, 4, 24), P.A, [0, 0.21, -0.02], rx(PI / 2));
-    if (spec === 'a') {
-      crystal(hg, 0.6, [0, 0.26, -0.17], [-0.5, 0, 0], ICE2);
-      if (U) {
-        // shatter storm: a spinning ring of ice shards around the crystal
-        for (let i = 0; i < 8; i++) {
-          const a = (i / 8) * PI * 2, c = Math.cos(a), s = Math.sin(a);
-          sg.add(octa(0.04), i % 2 ? P.W : ICE, [c * 0.27, (i % 3) * 0.035 - 0.03, s * 0.27], aimY([0, 0, 0], [-s * 0.6, 1, c * 0.6]), [1, 2.3, 1]);
-        }
-        sg.add(torus(0.27, 0.008, 3, 40), P.A, [0, 0, 0], rx(PI / 2));
-        out.spin = { pos: [0, cy, -0.02], axis: 'y', speed: 2.2 };
-      }
-    }
-    out.head.muzzle = [0, 0.09, 0.3];
+    if (L >= 2) for (const s of [-1, 1]) crystal(hg, 0.55, [s * 0.13, 0.2 + 0.05 * 0.55 * 2.2, -0.05], [0, 0, -s * 0.45], ICE2);
+    if (L >= 3) hg.add(torus(0.19, 0.012, 4, 24), P.A, [0, 0.21, -0.02], rx(PI / 2));
+    out.head.muzzle = [0, 0.13, 0.3];
   },
 
   // TESLA COIL - round stepped (tiered) plinth with insulators, a tall column of violet coils, orb or toroid crown. Tall & thin.
@@ -644,11 +650,12 @@ const BUILDERS = {
     if (L >= 2) for (let i = 0; i < 3; i++) {
       // vertex prisms (kept low: the barrel sweeps over them)
       const a = TR + i * (2 * PI / 3);
-      const h = L >= 3 ? 0.12 : 0.09;
+      const h = L >= 3 ? 0.065 : 0.05;
       bm.add(cyl(0.032, 0.05, h, 3), P.L, polar(a, 0.335, 0.06 + h / 2), ry(a + PI));
       bg.add(cyl(0.024, 0.034, 0.03, 3), E ? P.G : P.A, polar(a, 0.335, 0.06 + h + 0.012), ry(a + PI));
     }
     if (U) {
+      band(bg, 3, 0.426, 0.008, 0.012, P.G, TR);
       for (let i = 0; i < 3; i++) {
         const a = TR + PI / 3 + i * (2 * PI / 3); // over the middle of each side, just outside the plinth
         bg.add(octa(0.03), P.G, polar(a, 0.27, 0.13), null, [1, 1.6, 1]);
@@ -659,7 +666,7 @@ const BUILDERS = {
     hg.add(cyl(0.192, 0.192, 0.014, 12, true), P.A, [0, 0.04, 0]);
     const long = spec === 'b' ? (U ? 0.68 : 0.6) : spec === 'a' ? 0.48 : L >= 3 ? 0.52 : L >= 2 ? 0.46 : 0.4;
     // triangular prism housing (apex up) with triangular focusing bands and a neon ridge
-    const by = 0.15, z0 = -0.16, z1 = z0 + long, rb = 0.14, rf = spec === 'b' ? 0.11 : 0.1;
+    const by = 0.17, z0 = -0.16, z1 = z0 + long, rb = 0.14, rf = spec === 'b' ? 0.11 : 0.1;
     const triR = [PI / 2, PI, 0];
     const rAt = (z) => rb + (rf - rb) * ((z - z0) / long);
     hm.add(cyl(rf, rb, long, 3), P.K, [0, by, (z0 + z1) / 2], triR);
@@ -682,11 +689,11 @@ const BUILDERS = {
         hm.add(cyl(0.13, 0.13, 0.05, 5), P.P, [0, by, z1 + 0.02], [PI / 2, 0, 0]);
         hg.add(cyl(0.092, 0.092, 0.17, 5), P.A, [0, by, z1 + 0.1], [PI / 2, 0, 0]);
         hg.add(cyl(0.045, 0.045, 0.02, 5), P.W, [0, by, z1 + 0.19], [PI / 2, 0, 0]);
-        hg.add(torus(0.2, 0.01, 3, 30), P.A, [0, by, z1 + 0.035]);
-        hm.add(torus(0.172, 0.02, 4, 20), P.L, [0, by, z1 + 0.02]);
+        hg.add(torus(0.18, 0.01, 3, 30), P.G, [0, by, z1 + 0.035]);
+        hm.add(torus(0.155, 0.02, 4, 20), P.L, [0, by, z1 + 0.02]);
         for (let i = 0; i < 5; i++) {
           const a = (i / 5) * PI * 2 + PI / 2, c = Math.cos(a), sn = Math.sin(a);
-          const p = [c * 0.172, by + sn * 0.172, z1 + 0.05], r = aimY([0, 0, 0], [c * 0.3, sn * 0.3, 1]);
+          const p = [c * 0.155, by + sn * 0.155, z1 + 0.05], r = aimY([0, 0, 0], [c * 0.3, sn * 0.3, 1]);
           hm.add(cyl(0.028, 0.036, 0.09, 8), P.P, p, r);
           hg.add(cyl(0.024, 0.024, 0.016, 8), P.W, xf(p, r, [0, 0.048, 0]), r);
         }
@@ -737,7 +744,7 @@ const BUILDERS = {
         bg.add(box(ax ? 0.012 : 0.03, 0.05, az ? 0.012 : 0.03), P.S, [ax ? s * 0.292 : o, 0.045, az ? s * 0.292 : o]);
       }
     }
-    const th = L >= 3 ? 0.18 : L >= 2 ? 0.15 : 0.12, tr = 0.068;
+    const th = L >= 3 ? 0.13 : L >= 2 ? 0.115 : 0.1, tr = 0.068;
     for (const [sx, sz] of CORNERS) {
       const x = sx * 0.24, z = sz * 0.24;
       bm.add(cyl(tr, tr, th, 10), P.P, [x, th / 2, z]);
@@ -745,8 +752,8 @@ const BUILDERS = {
       for (let k = 0; k < (L >= 2 ? 2 : 1); k++) bg.add(cyl(tr + 0.004, tr + 0.004, 0.02, 10, true), P.A, [x, th * (0.45 + k * 0.33), z]);
       bg.add(cyl(tr * 0.5, tr * 0.5, 0.012, 8), E ? P.G : P.A, [x, th + 0.026, z]);
       if (U) {
-        bg.add(cone(0.042, 0.1, 6), P.G, [x, th + 0.085, z]);
-        bg.add(cone(0.02, 0.06, 6), P.W, [x, th + 0.066, z]);
+        bg.add(torus(tr * 0.72, 0.012, 3, 10), P.G, [x, th + 0.02, z], rx(PI / 2));
+        bg.add(cyl(tr * 0.3, tr * 0.3, 0.014, 8), P.W, [x, th + 0.028, z]);
       }
     }
     if (L >= 3) for (const [sx, sz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
@@ -796,54 +803,55 @@ const BUILDERS = {
       }
       return;
     }
-    drum(0.19, -0.2, hw - 0.1, L >= 2 || spec ? 0.064 : 0.058);
+    drum(0.21, -0.2, hw - 0.1, L >= 2 || spec ? 0.064 : 0.058);
     if (spec === 'a') {
       // plasma jet: long focused nozzle with magnetic coil rings
       const nl = U ? 0.5 : 0.44, z0 = 0.13;
-      hm.add(cyl(0.036, 0.046, nl, 8), P.H, [0, 0.1, z0 + nl / 2], rx(PI / 2));
-      const nc = U ? 4 : 3, cr = U ? 0.085 : 0.07;
+      const ny = 0.14;
+      hm.add(cyl(0.036, 0.046, nl, 8), P.H, [0, ny, z0 + nl / 2], rx(PI / 2));
+      const nc = U ? 4 : 3, cr = U ? 0.08 : 0.07;
       for (let i = 0; i < nc; i++) {
         const z = z0 + 0.08 + i * ((nl - 0.16) / (nc - 1));
-        hm.add(cyl(cr, cr, 0.034, 10), P.P, [0, 0.1, z], rx(PI / 2));
-        hg.add(torus(cr + 0.002, U ? 0.015 : 0.012, 4, 16), i === nc - 1 ? P.W : P.A, [0, 0.1, z]);
+        hm.add(cyl(cr, cr, 0.034, 8), P.P, [0, ny, z], rx(PI / 2));
+        hg.add(torus(cr + 0.002, U ? 0.015 : 0.012, 3, 12), i === nc - 1 ? P.W : P.A, [0, ny, z]);
       }
       const tipZ = z0 + nl;
-      hm.add(cyl(0.028, 0.044, 0.05, 8), P.H, [0, 0.1, tipZ + 0.02], rx(PI / 2));
-      hg.add(sphere(0.03, 8, 6), P.W, [0, 0.1, tipZ + 0.05]);
+      hm.add(cyl(0.028, 0.044, 0.05, 8), P.H, [0, ny, tipZ + 0.02], rx(PI / 2));
+      hg.add(sphere(0.03, 8, 6), P.W, [0, ny, tipZ + 0.05]);
       if (U) {
         // solar flare: a burning sun-disc crest behind the hull
         const hc = [0, 0.38, -0.2];
         hm.add(box(0.045, 0.2, 0.045), P.L, [0, 0.24, -0.2]);
-        hm.add(torus(0.17, 0.024, 4, 32), P.P, hc);
-        hg.add(torus(0.17, 0.012, 4, 32), P.G, [hc[0], hc[1], hc[2] + 0.02]);
-        hg.add(sphere(0.07, 10, 8), P.W, hc);
-        hg.add(torus(0.11, 0.012, 4, 24), P.A, hc);
+        hm.add(torus(0.17, 0.024, 3, 24), P.P, hc);
+        hg.add(torus(0.17, 0.012, 3, 24), P.G, [hc[0], hc[1], hc[2] + 0.02]);
+        hg.add(sphere(0.07, 8, 6), P.W, hc);
+        hg.add(torus(0.11, 0.012, 3, 20), P.A, hc);
         for (let i = 0; i < 12; i++) {
           const a = (i / 12) * PI * 2, ln = i % 2 ? 0.07 : 0.12, rr = 0.2 + ln / 2;
           hg.add(cone(0.024, ln, 4), i % 2 ? P.T : P.A, [hc[0] + Math.cos(a) * rr, hc[1] + Math.sin(a) * rr, hc[2]], rz(a - PI / 2));
         }
       }
-      out.head.muzzle = [0, 0.1, tipZ + 0.07];
+      out.head.muzzle = [0, ny, tipZ + 0.07];
       return;
     }
     // feed pipe + wide fan nozzle with a glowing throat
-    const pl = L >= 3 ? 0.18 : 0.14;
-    hm.add(cyl(0.04, 0.05, pl, 8), P.H, [0, 0.09, 0.14 + pl / 2], rx(PI / 2));
+    const pl = L >= 3 ? 0.18 : 0.14, ny = 0.12;
+    hm.add(cyl(0.04, 0.05, pl, 8), P.H, [0, ny, 0.14 + pl / 2], rx(PI / 2));
     const nz = 0.14 + pl + 0.035;
-    hm.add(cyl(0.095, 0.056, 0.09, 8), P.L, [0, 0.09, nz], rx(PI / 2), [1.45, 1, 0.8]);
-    hg.add(cyl(0.08, 0.08, 0.012, 8), L >= 3 ? P.G : P.A, [0, 0.09, nz + 0.041], rx(PI / 2), [1.45, 1, 0.8]);
-    hg.add(cyl(0.04, 0.04, 0.014, 8), P.W, [0, 0.09, nz + 0.042], rx(PI / 2), [1.45, 1, 0.8]);
-    hg.add(cyl(0.098, 0.098, 0.014, 8, true), P.A, [0, 0.09, nz - 0.02], rx(PI / 2), [1.45, 1, 0.8]);
+    hm.add(cyl(0.095, 0.056, 0.09, 8), P.L, [0, ny, nz], rx(PI / 2), [1.45, 1, 0.8]);
+    hg.add(cyl(0.08, 0.08, 0.012, 8), L >= 3 ? P.G : P.A, [0, ny, nz + 0.041], rx(PI / 2), [1.45, 1, 0.8]);
+    hg.add(cyl(0.04, 0.04, 0.014, 8), P.W, [0, ny, nz + 0.042], rx(PI / 2), [1.45, 1, 0.8]);
+    hg.add(cyl(0.098, 0.098, 0.014, 8, true), P.A, [0, ny, nz - 0.02], rx(PI / 2), [1.45, 1, 0.8]);
     if (L >= 2) {
-      sym(hm, () => box(0.05, 0.12, 0.24), P.P, [hw / 2 + 0.03, 0.08, -0.04]);
-      sym(hg, () => box(0.052, 0.02, 0.14), P.A, [hw / 2 + 0.03, 0.12, -0.04]);
+      sym(hm, () => box(0.05, 0.12, 0.2), P.P, [hw / 2 + 0.03, 0.08, -0.04]);
+      sym(hg, () => box(0.052, 0.02, 0.12), P.A, [hw / 2 + 0.03, 0.12, -0.04]);
     }
     if (L >= 3) {
-      for (const z of [0.18, 0.26]) hm.add(torus(0.054, 0.013, 4, 10), P.H, [0, 0.09, z]);
-      hm.add(box(0.18, 0.025, 0.12), P.L, [0, 0.15, 0.22]);
-      hg.add(box(0.1, 0.012, 0.012), P.A, [0, 0.165, 0.28]);
+      for (const z of [0.18, 0.26]) hm.add(torus(0.054, 0.013, 4, 10), P.H, [0, ny, z]);
+      hm.add(box(0.18, 0.025, 0.12), P.L, [0, ny + 0.06, 0.22]);
+      hg.add(box(0.1, 0.012, 0.012), P.A, [0, ny + 0.075, 0.28]);
     }
-    out.head.muzzle = [0, 0.09, nz + 0.07];
+    out.head.muzzle = [0, ny, nz + 0.07];
   },
 
   // SAM LAUNCHER - oblong rectangular pad with vertical missile racks, tilted box launcher. Medium, yellow.
@@ -1056,10 +1064,17 @@ const BUILDERS = {
     inlay(bm, bg, 4, 0.21, top, 0.026, P.L, P.A);
     if (L >= 3) inlay(bm, bg, 4, 0.36, 0.06, 0.02, P.K, P.A);
     if (L >= 2) for (let i = 0; i < 4; i++) {
-      // beacons on the diamond's points
+      // beacons on the diamond's points (tall overdrive pylons for spec a)
       const a = (i / 4) * PI * 2;
-      bm.add(cyl(0.03, 0.04, 0.05, 4), P.L, polar(a, 0.37, 0.085));
-      bg.add(octa(0.03), E ? P.G : P.A, polar(a, 0.37, 0.14), null, [1, 1.7, 1]);
+      if (spec === 'a') {
+        const h = U ? 0.32 : 0.27;
+        bm.add(cyl(0.02, 0.036, h, 4), P.L, polar(a, 0.36, 0.06 + h / 2));
+        strut(bg, polar(a, 0.385, 0.07), polar(a, 0.372, 0.06 + h * 0.9), 0.012, P.A);
+        bg.add(octa(0.034), P.G, polar(a, 0.36, 0.06 + h + 0.05), null, [1, 1.8, 1]);
+      } else {
+        bm.add(cyl(0.03, 0.04, 0.05, 4), P.L, polar(a, 0.37, 0.085));
+        bg.add(octa(0.03), E ? P.G : P.A, polar(a, 0.37, 0.14), null, [1, 1.7, 1]);
+      }
     }
     if (U) {
       // a floating diamond frame around the obelisk
@@ -1084,10 +1099,10 @@ const BUILDERS = {
     const sy = oh + 0.2;
     out.spin = { pos: [0, sy, 0], axis: 'y', speed: 1.4 };
     const core = spec === 'a' ? (U ? 0.14 : 0.12) : 0.08 + L * 0.012;
-    sg.add(octa(core), L >= 3 || spec ? P.G : P.A, [0, 0, 0], null, [1, 1.7, 1]);
+    sg.add(octa(core), U ? P.G : P.A, [0, 0, 0], null, [1, 1.7, 1]);
     sg.add(octa(core * 0.3), P.W, [0, core * 1.7 + 0.03, 0], null, [1, 1.7, 1]);
     sg.add(octa(core * 0.3), P.W, [0, -core * 1.7 - 0.03, 0], null, [1, 1.7, 1]);
-    const rings = spec ? (U ? 4 : 3) : L;
+    const rings = spec === 'a' ? (U ? 3 : 2) : spec === 'b' ? (U ? 2 : 1) : L;
     for (let i = 0; i < rings; i++) {
       sg.add(torus(0.17 + i * 0.055, i === 3 ? 0.009 : 0.012, 4, 30), i % 2 ? P.T : P.A, [0, 0, 0], [PI / 2 + (i - 1) * 0.5, i * 0.7, 0]);
     }
@@ -1103,7 +1118,8 @@ const BUILDERS = {
     if (spec === 'b') {
       // salvage: a collector funnel under the core with orbiting resource cubes
       hm.add(cyl(U ? 0.24 : 0.2, 0.06, U ? 0.12 : 0.1, 12), P.L, [0, oh + 0.1, 0]);
-      hg.add(torus(U ? 0.24 : 0.2, 0.012, 3, 30), P.A, [0, oh + (U ? 0.16 : 0.15), 0], rx(PI / 2));
+      hg.add(cyl(U ? 0.22 : 0.18, U ? 0.22 : 0.18, 0.008, 16), P.S, [0, oh + (U ? 0.162 : 0.152), 0]);
+      hg.add(torus(U ? 0.24 : 0.2, 0.012, 3, 30), U ? P.G : P.A, [0, oh + (U ? 0.16 : 0.15), 0], rx(PI / 2));
       const n = U ? 6 : 4;
       for (let i = 0; i < n; i++) {
         const a = (i / n) * PI * 2 + PI / n;
@@ -1241,15 +1257,32 @@ const BUILDERS = {
       bm.add(cyl(0.052, 0.056, 0.012, 8), P.K, h.p, rot);
       bg.add(cyl(0.036, 0.036, 0.016, 8), P.A, h.p, rot);
     }
-    if (L >= 2) {
+    if ((L >= 2 && spec !== 'a') || spec === 'b') {
       const horns = L >= 3 ? 6 : 4;
       for (let i = 0; i < horns; i++) {
         const a = (i / horns) * PI * 2;
-        const h = onDome(a, 1.32, 0.02);
-        const rot = aimY([0, 0, 0], h.n);
-        bm.add(cyl(0.012, 0.018, 0.05, 6), P.L, h.p, rot);
-        bg.add(sphere(0.017, 5, 3), E ? P.G : P.A, xf(h.p, rot, [0, 0.03, 0]));
+        if (spec === 'b') {
+          // cluster bomblets clamped to the shell
+          const h = onDome(a, 1.28, 0.016);
+          const rot = aimY([0, 0, 0], h.n);
+          bm.add(sphere(0.04, 8, 5), P.L, h.p, rot, [1, 0.8, 1]);
+          bg.add(cyl(0.022, 0.022, 0.012, 8), U ? P.G : P.A, xf(h.p, rot, [0, 0.03, 0]), rot);
+        } else {
+          const h = onDome(a, 1.32, 0.02);
+          const rot = aimY([0, 0, 0], h.n);
+          bm.add(cyl(0.012, 0.018, 0.05, 6), P.L, h.p, rot);
+          bg.add(sphere(0.017, 5, 3), E ? P.G : P.A, xf(h.p, rot, [0, 0.03, 0]));
+        }
       }
+    }
+    if (spec === 'a') for (let i = 0; i < 3; i++) {
+      // EMP antennae rising from the shell
+      const a = (i / 3) * PI * 2 + PI / 3;
+      const h = onDome(a, 0.8, 0);
+      const tip = [h.p[0] + Math.sin(a) * 0.05, h.p[1] + 0.17, h.p[2] + Math.cos(a) * 0.05];
+      strut(bm, h.p, tip, 0.014, P.H, 5);
+      bg.add(torus(0.022, 0.006, 3, 8), P.A, [(h.p[0] + tip[0]) / 2, (h.p[1] + tip[1]) / 2, (h.p[2] + tip[2]) / 2], rx(PI / 2));
+      bg.add(sphere(0.024, 6, 4), U ? P.W : P.G, tip);
     }
     if (U) {
       if (spec === 'a') {

@@ -1,5 +1,5 @@
 // In-game HUD: stats, commander abilities, wave control, radial menus, info panels, banners and floating texts.
-import { h, svg, fmt } from './dom.js';
+import { h, svg, fmt, add } from './dom.js';
 import {
   TOWERS, ENEMIES, ABILITIES, TARGET_LABEL, DAMAGE_TYPES, DAMAGE_ORDER, ARMOR_CLASSES, VETERANCY, POWER_NODE,
   towerInfo, damageType,
@@ -458,7 +458,7 @@ export class Hud {
     const g = this.s.game;
     const el = this.infoPanel();
     const cost = g.wreckCost(w);
-    el.append(h('div', { class: 'in' }, '殘骸'), h('div', { class: 'id' }, '燒毀的機甲殘骸擋住了建造位置。付費清除後即可在此建造砲塔。'),
+    add(el, h('div', { class: 'in' }, '殘骸'), h('div', { class: 'id' }, '燒毀的機甲殘骸擋住了建造位置。付費清除後即可在此建造砲塔。'),
       g.map.isNode(w.col, w.row) ? h('div', { class: 'foot' }, h('span', { style: { color: '#ffc93d' } }, '◆ 殘骸下方偵測到能量節點！')) : null,
       h('div', { class: 'hint' }, preview ? (g.credits >= cost ? `再點一次清除（${cost}）` : `資金不足（需要 ${cost}）`) : `清除費用 ${cost}`));
   }
@@ -470,7 +470,7 @@ export class Hud {
     const el = this.infoPanel();
     if (!spec) {
       const node = this.radial && g.map.isNode(this.radial.col, this.radial.row);
-      el.append(h('div', { class: 'in' }, '建造砲塔'), h('div', { class: 'id' }, '點選一種砲塔預覽射程與能力，再點一次確認建造。'),
+      add(el, h('div', { class: 'in' }, '建造砲塔'), h('div', { class: 'id' }, '點選一種砲塔預覽射程與能力，再點一次確認建造。'),
         node ? h('div', { class: 'foot' }, h('span', { style: { color: '#ffc93d' } }, `◆ 能量節點：傷害 +${pct(POWER_NODE.damage)}、射程 +${pct(POWER_NODE.range)}`)) : null);
       return;
     }

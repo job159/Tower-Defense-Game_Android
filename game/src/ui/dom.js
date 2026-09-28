@@ -18,6 +18,12 @@ export function h(tag, attrs = {}, ...children) {
   return el;
 }
 
+// Element.append() would print null/false as literal text; skip them the way h() does.
+export function add(el, ...children) {
+  el.append(...children.flat().filter((c) => c != null && c !== false));
+  return el;
+}
+
 export function svg(name) {
   const span = document.createElement('span');
   span.style.display = 'inline-flex';

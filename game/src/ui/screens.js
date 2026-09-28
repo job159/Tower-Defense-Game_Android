@@ -1,5 +1,5 @@
 // Menus: title, level select, deploy (loadout + intel), codex, research lab, settings, pause, results and dialogs.
-import { h, svg } from './dom.js';
+import { h, svg, add } from './dom.js';
 import { LEVELS } from '../core/levels.js';
 import {
   RESEARCH, RESEARCH_GROUPS, TOWERS, TOWER_ORDER, ENEMIES, ARMOR_CLASSES, DAMAGE_TYPES, DAMAGE_ORDER, UNLOCK_AT, LOADOUT_SIZE, ABILITIES, towerBaseStats,
@@ -258,7 +258,7 @@ export class Screens {
       }
       segWrap.textContent = '';
       if (!endless) segWrap.append(this.diffSeg(lv, () => { renderLeft(); }));
-      left.append(cv,
+      add(left, cv,
         h('div', { class: 'sect' }, '敵情情報（點擊查看）'), intel,
         !endless && lv.challenge ? h('div', { class: 'chall' }, `◆ 挑戰：${lv.challenge.text}${save.challenge(lv.id) ? '（已完成）' : ''}`) : null,
         ...levelMutators(lv, this.diff).map((m) => h('div', { class: 'mut' }, `☢ 惡夢突變「${MUTATORS[m].name}」：${MUTATORS[m].desc}`)),
