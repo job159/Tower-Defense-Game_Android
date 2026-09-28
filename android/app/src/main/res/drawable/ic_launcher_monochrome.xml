@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon layer (Android 13+): same emblem as a single-color silhouette; only alpha matters. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <group
+        android:pivotX="54"
+        android:pivotY="54"
+        android:scaleX="1.08"
+        android:scaleY="1.08">
+
+        <path
+            android:pathData="M54,28L76.52,41L76.52,67L54,80L31.48,67L31.48,41Z"
+            android:strokeWidth="3"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineJoin="round" />
+        <path
+            android:pathData="M57.38,36.45L67.51,42.3M70.89,48.15L70.89,59.85M67.51,65.7L57.38,71.55M50.62,71.55L40.49,65.7M37.11,59.85L37.11,48.15M40.49,42.3L50.62,36.45"
+            android:strokeWidth="1.2"
+            android:strokeAlpha="0.6"
+            android:strokeColor="#FFFFFFFF"
+            android:strokeLineCap="round" />
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M51.8,28a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0M74.32,41a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0M74.32,67a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0M51.8,80a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0M29.28,67a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0M29.28,41a2.2,2.2 0,1 0,4.4 0a2.2,2.2 0,1 0,-4.4 0" />
+
+        <!-- Crystal: lit half solid, shaded half translucent -->
+        <path
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,40L46.5,51.5L54,68Z" />
+        <path
+            android:fillAlpha="0.6"
+            android:fillColor="#FFFFFFFF"
+            android:pathData="M54,40L61.5,51.5L54,68Z" />
+    </group>
+</vector>

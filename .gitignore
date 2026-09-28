@@ -1,0 +1,12 @@
+node_modules/
+build/
+dist/
+*.log
+# signing key: back it up privately, never publish it
+android/keystore/
+*.jks
+*.keystore
+keystore.properties
+*.apk
+# local tool settings
+.claude/
