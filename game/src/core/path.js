@@ -125,7 +125,7 @@ export function buildMap(level) {
   const paths = [];
   const spawns = [];
   const gates = [];
-  let core = null;
+  const cores = []; // campaign lanes share one core; a versus map has one per lane
   for (const wp of level.paths) {
     for (let i = 0; i < wp.length - 1; i++) {
       const [c0, r0] = wp[i], [c1, r1, flag] = wp[i + 1];
@@ -151,10 +151,11 @@ export function buildMap(level) {
     const dl = Math.hypot(second.x - first.x, second.z - first.z) || 1;
     spawns.push({ col: sc, row: sr, x: first.x, z: first.z, dirX: (second.x - first.x) / dl, dirZ: (second.z - first.z) / dl });
     const [cc, cr] = wp[wp.length - 1];
-    core = { col: cc, row: cr, ...tileToWorld(level, cc, cr) };
+    if (!cores.some((k) => k.col === cc && k.row === cr)) cores.push({ col: cc, row: cr, ...tileToWorld(level, cc, cr) });
   }
   for (const s of spawns) grid[idx(s.col, s.row)] = TILE.SPAWN;
-  grid[idx(core.col, core.row)] = TILE.CORE;
+  for (const k of cores) grid[idx(k.col, k.row)] = TILE.CORE;
+  const core = cores[0];
 
   const nodes = new Set((level.nodes || []).map(([c, r]) => idx(c, r)));
   const wrecks = new Map();
@@ -170,7 +171,7 @@ export function buildMap(level) {
   });
 
   return {
-    cols, rows, grid, paths, airPaths, spawns, core, gates, nodes, wrecks,
+    cols, rows, grid, paths, airPaths, spawns, core, cores, gates, nodes, wrecks,
     at(c, r) { return c < 0 || r < 0 || c >= cols || r >= rows ? TILE.VOID : grid[idx(c, r)]; },
     isNode(c, r) { return nodes.has(idx(c, r)); },
     wreckAt(c, r) { return wrecks.get(idx(c, r)) || null; },

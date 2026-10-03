@@ -13,13 +13,14 @@ export class Session {
     this.app = app;
     this.level = level;
     this.opts = opts;
-    this.game = new Game(level, {
+    // versus passes in its own prebuilt game and HUD class
+    this.game = opts.game || new Game(level, {
       difficulty: opts.difficulty || 'normal', endless: !!opts.endless,
       research: app.save.data.research, snapshot: opts.snapshot, loadout: opts.loadout,
     });
     this.view = new GameView(app.renderer, this.game, { fxScale: app.fxScale });
     this.view.on((ev) => this.onEvent(ev));
-    this.hud = new Hud(this);
+    this.hud = new (opts.hudClass || Hud)(this);
     app.ui.prepend(this.hud.root);
     this.speed = 1;
     this.paused = false;

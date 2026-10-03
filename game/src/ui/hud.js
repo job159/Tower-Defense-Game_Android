@@ -163,8 +163,16 @@ export class Hud {
       this.elCredits.lastChild.textContent = fmt(credits);
       if (this.radial) this.refreshRadialAfford();
     }
-    const waveTxt = g.endless ? `${g.wave}` : `${g.wave}/${g.totalWaves}`;
+    const waveTxt = this.waveText(g);
     if (c.wave !== waveTxt) { c.wave = waveTxt; this.elWave.lastChild.textContent = waveTxt; }
+    if (this.elNext) this.updateNext(g, c);
+    for (const id in this.abBtns) this.cooldown(this.abBtns[id], g.abilities[id].cd, g.abilities[id].max, false);
+    this.updateCommon(g, c);
+  }
+
+  waveText(g) { return g.endless ? `${g.wave}` : `${g.wave}/${g.totalWaves}`; }
+
+  updateNext(g, c) {
     const can = g.canCallWave();
     const early = can && g.enemies.length > 0 && g.wave > 0;
     const peek = g.peekWave();
@@ -182,7 +190,10 @@ export class Hud {
         this.elNext.classList.toggle('pulse', g.wave === 0);
       }
     }
-    for (const id in this.abBtns) this.cooldown(this.abBtns[id], g.abilities[id].cd, g.abilities[id].max, false);
+  }
+
+  // boss bar, speed button, stasis tint, radial menu anchor, enemy card
+  updateCommon(g, c) {
     let boss = null;
     for (const e of g.enemies) if (e.boss && (!boss || e.hp > boss.hp)) boss = e;
     if (boss) {
@@ -191,7 +202,7 @@ export class Hud {
       this.elBoss.querySelector('b').style.width = boss.maxShield ? `${(boss.shield / boss.maxShield) * 100}%` : '0';
     } else if (this.elBoss.style.display !== 'none') this.elBoss.style.display = 'none';
     const spTxt = `${this.s.speed}×`;
-    if (c.speed !== spTxt) { c.speed = spTxt; this.elSpeed.lastChild.textContent = spTxt; this.elSpeed.classList.toggle('fast', this.s.speed > 1); }
+    if (this.elSpeed && c.speed !== spTxt) { c.speed = spTxt; this.elSpeed.lastChild.textContent = spTxt; this.elSpeed.classList.toggle('fast', this.s.speed > 1); }
     this.vStasis.classList.toggle('on', g.stasisT > 0);
     if (this.radial && this.radial.anchor) this.placeRadial();
     if (this.enemyEl) this.updateEnemyCard();

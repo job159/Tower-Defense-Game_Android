@@ -65,7 +65,8 @@ export class World {
     const { level, map } = this;
     const { map: panelMap, emi } = panelTextures();
     const slab = bevelSlab(0.95, 0.16, 0.95, 0.035);
-    const buildB = new GeoBuilder(true), otherB = new GeoBuilder(true), pathB = new GeoBuilder(true);
+    const buildB = new GeoBuilder(true), oppB = new GeoBuilder(true), otherB = new GeoBuilder(true), pathB = new GeoBuilder(true);
+    const oppHalf = (c) => level.versus && c >= level.half;
     const sideB = new GeoBuilder(), trimB = new GeoBuilder();
     const wreckSlabs = [];
     const rand = this.rand;
@@ -78,7 +79,7 @@ export class World {
         const rot = [0, (Math.floor(rand() * 4) * Math.PI) / 2, 0];
         if (t === TILE.BUILD) {
           const v = 0.88 + rand() * 0.12;
-          buildB.add(slab.clone(), new THREE.Color(0.2 * v, 0.215 * v, 0.27 * v), [x, 0, z], rot);
+          (oppHalf(c) ? oppB : buildB).add(slab.clone(), new THREE.Color(0.2 * v, 0.215 * v, 0.27 * v), [x, 0, z], rot);
         } else if (t === TILE.DECOR) {
           otherB.add(slab.clone(), 0x1a1e2a, [x, 0, z], rot);
         } else if (t === TILE.WRECK) {
@@ -113,6 +114,11 @@ export class World {
       return this.add(m);
     };
     this.buildMesh = mk(buildB, this.tileMat);
+    if (level.versus) {
+      this.oppTileMat = this.tileMat.clone();
+      this.oppTileMat.emissive = new THREE.Color(0xff3d8a).multiplyScalar(0.55);
+      mk(oppB, this.oppTileMat);
+    }
     mk(otherB, plainMat);
     this.wreckSlabs = new Map();
     for (const [c, r, x, z, rot] of wreckSlabs) {
@@ -148,14 +154,14 @@ export class World {
         if (isLane(c + dc, r + dr) || n === TILE.VOID) continue;
         const horiz = dc === 0;
         const ox = dc * 0.43, oz = dr * 0.43;
-        lines.add(new THREE.PlaneGeometry(horiz ? 1.0 : 0.035, horiz ? 0.035 : 1.0), COLORS.cyan, [x + ox, GROUND_Y + 0.004, z + oz], [-Math.PI / 2, 0, 0]);
+        lines.add(new THREE.PlaneGeometry(horiz ? 1.0 : 0.035, horiz ? 0.035 : 1.0), level.versus && c >= level.half ? 0xff3d8a : COLORS.cyan, [x + ox, GROUND_Y + 0.004, z + oz], [-Math.PI / 2, 0, 0]);
       }
     }
     const g = lines.build();
     if (g) this.add(new THREE.Mesh(g, glowVertexMat(2.2)));
 
-    const flowMat = new THREE.ShaderMaterial({
-      uniforms: { uTime: this.uniforms.uTime, uColor: { value: new THREE.Color(COLORS.cyan).multiplyScalar(0.9) } },
+    const flowMat = (color) => new THREE.ShaderMaterial({
+      uniforms: { uTime: this.uniforms.uTime, uColor: { value: new THREE.Color(color).multiplyScalar(0.9) } },
       vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
       fragmentShader: `uniform float uTime; uniform vec3 uColor; varying vec2 vUv;
         void main(){
@@ -167,7 +173,7 @@ export class World {
         }`,
       ...additive,
     });
-    for (const path of this.map.paths) {
+    this.map.paths.forEach((path, pi) => {
       const pos = [], uv = [], idx = [];
       const w = 0.2, P = { x: 0, z: 0, dx: 0, dz: 0 };
       let i = 0;
@@ -185,10 +191,31 @@ export class World {
       geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
       geo.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
       geo.setIndex(idx);
-      const m = new THREE.Mesh(geo, flowMat);
+      const m = new THREE.Mesh(geo, flowMat(level.versus && pi === 1 ? 0xff3d8a : COLORS.cyan));
       m.renderOrder = 2;
       this.add(m);
+    });
+    if (level.versus) this.buildDivider();
+  }
+
+  // Versus: a glowing seam down the middle of the platform between the two halves.
+  buildDivider() {
+    const { level } = this;
+    const g = new GeoBuilder();
+    for (let r = 0; r < level.rows; r++) {
+      const z = r - (level.rows - 1) / 2;
+      if (this.map.at(level.half - 1, r) === TILE.VOID) continue;
+      g.add(new THREE.PlaneGeometry(0.05, 0.98), 0xffffff, [0, 0.085, z], [-Math.PI / 2, 0, 0]);
     }
+    const m = new THREE.Mesh(g.build(), new THREE.ShaderMaterial({
+      uniforms: { uTime: this.uniforms.uTime },
+      vertexShader: 'varying vec3 vP; void main(){ vP = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
+      fragmentShader: `uniform float uTime; varying vec3 vP;
+        void main(){ float p = 0.55 + 0.45 * sin(vP.z * 2.5 - uTime * 3.0); gl_FragColor = vec4(vec3(0.6, 0.55, 1.0) * (1.4 + p), 1.0); }`,
+      ...additive,
+    }));
+    m.renderOrder = 3;
+    this.add(m);
   }
 
   buildDecor() {
@@ -405,7 +432,13 @@ export class World {
   }
 
   buildCore() {
-    const { x, z } = this.map.core;
+    // versus maps have one core per lane: ours (cyan) and the opponent's (red/magenta)
+    const palettes = [{ main: COLORS.cyan, ring: COLORS.magenta, crystal: 0x7ff4ff }, { main: 0xff3d6e, ring: 0xffb03d, crystal: 0xff8fb0 }];
+    this.cores = this.map.cores.map((c, i) => this.makeCore(c.x, c.z, palettes[this.level.versus ? i : 0]));
+    this.core = this.cores[0];
+  }
+
+  makeCore(x, z, pal) {
     const g = new THREE.Group();
     g.position.set(x, GROUND_Y, z);
     const base = new GeoBuilder();
@@ -426,30 +459,29 @@ export class World {
       tips.add(octa(0.06), 0xffffff, [Math.cos(a) * 0.42, 0.72, Math.sin(a) * 0.42]);
     }
     tips.add(cyl(0.47, 0.47, 0.03, 8, true), 0xffffff, [0, 0.245, 0]);
-    this.coreGlowMat = new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(COLORS.cyan).multiplyScalar(3.5) });
-    g.add(new THREE.Mesh(tips.build(), this.coreGlowMat));
+    g.add(new THREE.Mesh(tips.build(), new THREE.MeshBasicMaterial({ vertexColors: true, color: new THREE.Color(pal.main).multiplyScalar(3.5) })));
 
-    this.crystalMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(0x7ff4ff).multiplyScalar(4) });
-    const crystal = new THREE.Mesh(octa(0.2), this.crystalMat);
+    const crystalMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.crystal).multiplyScalar(4) });
+    const crystal = new THREE.Mesh(octa(0.2), crystalMat);
     crystal.scale.set(1, 1.7, 1);
     crystal.position.y = 1.05;
     g.add(crystal);
-    const shellMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(COLORS.cyan).multiplyScalar(0.6), ...additive, opacity: 1 });
+    const shellMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(pal.main).multiplyScalar(0.6), ...additive, opacity: 1 });
     const shell = new THREE.Mesh(octa(0.32), shellMat);
     shell.scale.set(1, 1.6, 1);
     shell.position.y = 1.05;
     g.add(shell);
-    const beam = new THREE.Mesh(cyl(0.05, 0.08, 0.7, 8, true), glowMat(COLORS.cyan, 2.2, { ...additive }));
+    const beam = new THREE.Mesh(cyl(0.05, 0.08, 0.7, 8, true), glowMat(pal.main, 2.2, { ...additive }));
     beam.position.y = 0.72;
     g.add(beam);
-    const r1 = new THREE.Mesh(torus(0.46, 0.018, 6, 40), glowMat(COLORS.magenta, 3.5));
-    const r2 = new THREE.Mesh(torus(0.36, 0.014, 6, 40), glowMat(COLORS.cyan, 3.5));
+    const r1 = new THREE.Mesh(torus(0.46, 0.018, 6, 40), glowMat(pal.ring, 3.5));
+    const r2 = new THREE.Mesh(torus(0.36, 0.014, 6, 40), glowMat(pal.main, 3.5));
     r1.position.y = r2.position.y = 1.05;
     g.add(r1, r2);
     // shield dome
-    this.shieldUniforms = { uTime: this.uniforms.uTime, uHit: { value: 0 }, uColor: { value: new THREE.Color(COLORS.cyan) } };
+    const shieldUniforms = { uTime: this.uniforms.uTime, uHit: { value: 0 }, uColor: { value: new THREE.Color(pal.main) } };
     const dome = new THREE.Mesh(new THREE.SphereGeometry(0.78, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.ShaderMaterial({
-      uniforms: this.shieldUniforms,
+      uniforms: shieldUniforms,
       vertexShader: `varying vec3 vN; varying vec3 vV; varying vec3 vP;
         void main(){ vec4 mv = modelViewMatrix * vec4(position,1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); vP = position; gl_Position = projectionMatrix * mv; }`,
       fragmentShader: `uniform float uTime; uniform float uHit; uniform vec3 uColor; varying vec3 vN; varying vec3 vV; varying vec3 vP;
@@ -465,9 +497,10 @@ export class World {
     }));
     g.add(dome);
     this.add(g);
-    this.core = { group: g, crystal, shell, r1, r2, dome, hit: 0, danger: 0 };
+    const core = { group: g, crystal, shell, r1, r2, dome, hit: 0, danger: 0 };
+    const crystalBase = new THREE.Color(pal.crystal);
+    const hurt = new THREE.Color(0xff3050);
     this.anims.push((t, dt) => {
-      const c = this.core;
       crystal.rotation.y = t * 0.9;
       shell.rotation.y = -t * 0.5;
       const bob = Math.sin(t * 1.6) * 0.05;
@@ -475,16 +508,16 @@ export class World {
       r1.rotation.set(Math.PI / 2 + Math.sin(t * 0.7) * 0.5, t * 0.6, 0);
       r2.rotation.set(Math.PI / 2 + Math.cos(t * 0.9) * 0.6, -t * 0.8, 0.4);
       r1.position.y = r2.position.y = 1.05 + bob;
-      c.hit = Math.max(0, c.hit - dt * 2.2);
-      this.shieldUniforms.uHit.value = Math.min(1, c.hit + c.danger * (0.25 + 0.25 * Math.sin(t * 6)));
-      const col = this.crystalMat.color;
-      col.set(0x7ff4ff).lerp(new THREE.Color(0xff3050), Math.min(1, c.hit + c.danger * 0.6)).multiplyScalar(4);
-      g.position.x = x + (c.hit > 0.3 ? (Math.random() - 0.5) * 0.04 * c.hit : 0);
+      core.hit = Math.max(0, core.hit - dt * 2.2);
+      shieldUniforms.uHit.value = Math.min(1, core.hit + core.danger * (0.25 + 0.25 * Math.sin(t * 6)));
+      crystalMat.color.copy(crystalBase).lerp(hurt, Math.min(1, core.hit + core.danger * 0.6)).multiplyScalar(4);
+      g.position.x = x + (core.hit > 0.3 ? (Math.random() - 0.5) * 0.04 * core.hit : 0);
     });
+    return core;
   }
 
-  hitCore(amount = 1) { this.core.hit = Math.min(1.5, this.core.hit + 0.6 + amount * 0.2); }
-  setDanger(v) { this.core.danger = v; }
+  hitCore(amount = 1, i = 0) { const c = this.cores[i] || this.core; c.hit = Math.min(1.5, c.hit + 0.6 + amount * 0.2); }
+  setDanger(v, i = 0) { (this.cores[i] || this.core).danger = v; }
 
   // Support pillars and thrusters under the floating platform.
   buildUnderside() {

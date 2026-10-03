@@ -9,6 +9,8 @@ import { DIFFICULTY, DIFFICULTY_ORDER, MUTATORS, levelMutators, levelThreats } f
 import { unlockedTowers, defaultLoadout } from '../core/sim.js';
 import { setVibration } from '../audio/audio.js';
 import { statRows, towerTags, dmgChip, roleChip } from './hud.js';
+import { versusScreens } from './versusScreens.js';
+import { versusOnline } from './versusOnline.js';
 
 const stars = (n, max = 3) => h('span', { class: 'stars' }, ...Array.from({ length: max }, (_, i) => h('span', { class: `star${i < n ? ' on' : ''}` }, '★')));
 const DIFF_CLASS = { normal: '', hard: 'hard', nightmare: 'nightmare' };
@@ -74,6 +76,8 @@ export class Screens {
       return true;
     }
     if (this.name === 'deploy') { this.levels(); return true; }
+    if (this.name === 'versusPractice' || this.name === 'versusOnline') { this.versusMenu(); return true; }
+    if (this.name === 'versus') { this.title(); return true; }
     if (this.name === 'levels' || this.name === 'research' || this.name === 'codex') { this.title(); return true; }
     if (this.name === 'title') {
       if (window.NativeBridge) {
@@ -98,6 +102,7 @@ export class Screens {
       run && runLevel ? h('button', { class: 'btn primary', onclick: () => { this.click(); app.resumeRun(); } }, svg('play'),
         `繼續 · ${run.endless ? '無盡' : runLevel.name} 第 ${run.wave + 1} 波`) : null,
       h('button', { class: `btn ${run ? '' : 'primary'}`, onclick: () => { this.click(); this.levels(); } }, svg('wave'), '戰役'),
+      h('button', { class: 'btn vs-btn', onclick: () => { this.click(); this.versusMenu(); } }, svg('target'), '雙人對戰'),
       h('button', { class: 'btn', onclick: () => { this.click(); this.research(); } }, svg('research'), '研究所',
         save.freeStars() > 0 ? h('span', { class: 'chip', style: { marginLeft: 'auto', color: '#ffd23d' } }, `★ ${save.freeStars()}`) : null),
       h('div', { style: { display: 'flex', gap: '8px' } },
@@ -112,13 +117,29 @@ export class Screens {
     el.addEventListener('pointerdown', () => app.audio.unlock(), { once: true });
     this.show('title', el);
     app.audio.setMusic('menu');
-    if (save.data.news !== 2) {
-      // one-time "what's new" for players coming from v1 (fresh installs just skip it)
+    if ((save.data.news || 0) < 3) {
+      // one-time "what's new" for returning players (fresh installs just skip it)
+      const prev = save.data.news || 0;
       const returning = save.totalStars() > 0;
-      save.data.news = 2;
+      save.data.news = 3;
       save.write();
-      if (returning) this.whatsNew();
+      if (returning) { if (prev < 2) this.whatsNew(); else this.versusNews(); }
     }
+  }
+
+  versusNews() {
+    const items = [
+      ['雙人對戰', '同一張地圖分左右兩半，各守一邊，用派兵列把怪物送進對手的路線'],
+      ['線上對戰', '輸入相同的 5 位數房間號碼即可連線，任何網路都能玩'],
+      ['練習對戰', '和電腦（簡單／普通／困難）對戰，熟悉派兵與收入的節奏'],
+    ];
+    const m = this.modal([
+      h('h2', {}, '新模式：雙人對戰'),
+      h('div', { class: 'news' }, items.map(([t, d]) => h('div', { class: 'news-item' }, h('b', {}, t), h('span', {}, d)))),
+      h('div', { class: 'row' },
+        h('button', { class: 'btn ghost small', onclick: () => { this.click(); this.closeModal(m); } }, '稍後'),
+        h('button', { class: 'btn primary small', onclick: () => { this.click(); this.closeModal(m); this.versusMenu(); } }, '去看看')),
+    ], { cls: 'wide' });
   }
 
   whatsNew() {
@@ -129,7 +150,7 @@ export class Screens {
       ['傷害剋制系統', '6 種傷害 × 5 種裝甲，點敵人即可查看弱點'],
       ['新敵人與首領', '隱形幽影、EMP 干擾者、鏡面機、蜂巢艦……終焉會二階段升天'],
       ['10 關・3 種難度', '惡夢難度與突變、每關挑戰任務，每關最多 10 顆星'],
-      ['出擊編成與圖鑑', '每關挑 6 種砲塔上場，圖鑑收錄全部資料與剋制表'],
+      ['雙人對戰', '輸入房間號碼線上對戰，或和電腦練習派兵攻防'],
       ['全新音樂與音效', '動態配樂隨戰況推進，音效全面重製'],
     ];
     const list = h('div', { class: 'news' }, items.map(([t, d]) => h('div', { class: 'news-item' }, h('b', {}, t), h('span', {}, d))));
@@ -600,3 +621,5 @@ export function drawMinimap(cv, lv) {
   g.fill();
   g.shadowBlur = 0;
 }
+
+Object.assign(Screens.prototype, versusScreens, versusOnline);

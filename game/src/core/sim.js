@@ -334,7 +334,9 @@ export class Game {
 
     while (this.qi < this.queue.length && this.queue[this.qi].t <= this.time) {
       const s = this.queue[this.qi++];
-      this.spawnEnemy(s.type, s.path, s.wave, 0, s.hp);
+      const e = this.spawnEnemy(s.type, s.path, s.wave, 0, s.hp);
+      // versus: units sent by the opponent pay the defender a reduced bounty
+      if (s.sent) { e.sent = true; e.reward *= s.rewardMul ?? 1; }
     }
 
     this.updateDetection();

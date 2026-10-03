@@ -55,8 +55,17 @@ export class GameView {
     this.time = 0;
     this.listeners = [];
     this.selectedId = null;
+    // Everything drawn comes from `sources`: the player's game, plus the opponent's lane in versus (a local AI
+    // game or a network mirror exposing the same lists). Ids are unique across sources.
+    this.sources = [game];
     renderer.setScene(scene, this.rig.camera);
     for (const t of game.towers) { this.towers.add(t); this.addPool(t); this.addAura(t); }
+  }
+
+  addSource(src) {
+    this.sources.push(src);
+    src.events.length = 0; // its current towers are added directly below; stale events would replay
+    for (const t of src.towers) { this.towers.add(t); this.addPool(t); this.addAura(t); }
   }
 
   on(fn) { this.listeners.push(fn); }
@@ -101,7 +110,7 @@ export class GameView {
   // Enemy closest to a screen position (within a finger's reach).
   pickEnemy(sx, sy, maxPx = 34) {
     let best = null, bd = maxPx * maxPx;
-    for (const e of this.game.enemies) {
+    for (const src of this.sources) for (const e of src.enemies) {
       if (e.dead || e.inWarp || ((e.def.cloak || e.cloakT > 0) && !e.detected)) continue;
       const p = this.screenOf(e.x, (e.air ? e.y : 0.25) + 0.2, e.z);
       const d = (p.x - sx) ** 2 + (p.y - sy) ** 2;
@@ -145,7 +154,7 @@ export class GameView {
 
 
   // ---------------------------------------------------------------- event effects
-  handle(ev) {
+  handle(ev, src = this.game) {
     const s = this.fxScale;
     switch (ev.type) {
       case 'build': {
@@ -243,8 +252,9 @@ export class GameView {
       case 'well': break;
       case 'kill': this.death(ev.enemy); break;
       case 'leak': {
-        const c = this.game.map.core;
-        this.world.hitCore(ev.dmg);
+        const ci = src.side || 0;
+        const c = this.game.map.cores[ci] || this.game.map.core;
+        this.world.hitCore(ev.dmg, ci);
         this.flash(c.x, 1, c.z, 0xff3050, 2.2, 0.25);
         this.sparks(c.x, 0.8, c.z, 0xff4060, 20 * s, 4, 0.6);
         this.rig.shake(0.08 + ev.dmg * 0.02);
@@ -332,8 +342,10 @@ export class GameView {
         break;
       case 'ability':
         if (ev.id === 'stasis') {
-          this.decals.add({ x: 0, z: 0, shape: 1, thick: 0.08, size0: 0.5, size1: Math.max(this.level.cols, this.level.rows) * 2, r: 0.5, g: 1.2, b: 2.4, a: 1, life: 1.2 });
-          for (const e of this.game.enemies) this.ring(e.x, e.z, 0x6ad8ff, 0.1, 0.9, 0.6, 1);
+          // versus: the ripple covers only the caster's half
+          const vs = this.level.versus, cx = vs ? ((src.side || 0) ? 1 : -1) * this.level.cols / 4 : 0;
+          this.decals.add({ x: cx, z: 0, shape: 1, thick: 0.08, size0: 0.5, size1: vs ? this.level.cols * 0.9 : Math.max(this.level.cols, this.level.rows) * 2, r: 0.5, g: 1.2, b: 2.4, a: 1, life: 1.2 });
+          for (const e of src.enemies) this.ring(e.x, e.z, 0x6ad8ff, 0.1, 0.9, 0.6, 1);
         } else if (ev.id === 'thunder') {
           // 雷霆審判: a bolt from the sky onto every enemy, slightly staggered, plus a field-wide flash
           for (const [x, y, z, boss] of ev.hits) {
@@ -346,6 +358,17 @@ export class GameView {
           this.rig.shake(0.28);
         }
         break;
+      // versus: a pack leaves through the sender's side and arrives at the receiver's gate
+      case 'send':
+      case 'incoming': {
+        const ps = this.world.portals;
+        const p = ps[ev.type === 'incoming' ? (src.side || 0) : 1 - (src.side || 0)] || ps[0];
+        if (!p) break;
+        const col = ev.type === 'incoming' ? 0xff3d6e : 0x22e6ff;
+        this.ring(p.x, p.z, col, 0.2, 2.2, 0.7, 2);
+        this.flash(p.x, 0.6, p.z, col, 1.6, 0.3);
+        break;
+      }
       case 'clearWreck': {
         this.world.clearWreck(ev.col, ev.row);
         this.puff(ev.x, 0.2, ev.z, 8, 1);
@@ -355,7 +378,8 @@ export class GameView {
       }
       default: break;
     }
-    for (const fn of this.listeners) fn(ev);
+    ev.remote = src !== this.game;
+    for (const fn of this.listeners) fn(ev, src);
   }
 
   onFire(t, kind) {
@@ -473,20 +497,24 @@ export class GameView {
   frame(dt, rdt) {
     this.time += rdt;
     const t = this.time;
-    const game = this.game;
     const fx = this.fxScale;
-    for (const ev of game.events) this.handle(ev);
-    game.events.length = 0;
+    const srcs = this.sources;
+    for (const src of srcs) {
+      for (const ev of src.events) this.handle(ev, src);
+      src.events.length = 0;
+    }
+    const all = (k) => (srcs.length === 1 ? srcs[0][k] : srcs.flatMap((src) => src[k]));
+    const towers = all('towers'), enemies = all('enemies');
 
     this.world.update(t, rdt);
-    this.world.setDanger(game.lives / game.maxLives < 0.35 ? 1 : 0);
-    this.towers.update(game.towers, rdt, t);
-    this.enemies.update(game.enemies, rdt, t);
-    this.units.update(game, rdt, t);
+    for (const src of srcs) this.world.setDanger(src.lives / src.maxLives < 0.35 ? 1 : 0, src.side || 0);
+    this.towers.update(towers, rdt, t);
+    this.enemies.update(enemies, rdt, t);
+    this.units.update(srcs.length === 1 ? srcs[0] : { drones: all('drones'), mines: all('mines') }, rdt, t);
     this.range.material.uniforms.uTime.value = t;
 
     // projectiles
-    for (const p of game.projectiles) {
+    for (const p of all('projectiles')) {
       if (p.kind === 'bullet') {
         hex(TOWERS[p.tower.type].color);
         const dx = p.tx - p.x, dy = p.ty - p.y, dz = p.tz - p.z;
@@ -514,7 +542,7 @@ export class GameView {
     // beams: lasers, rails, tesla bolts, amp links
     const B = this.beams;
     B.begin();
-    for (const tw of game.towers) {
+    for (const tw of towers) {
       if (tw.beams && tw.beams.length) {
         const m = this.towers.muzzle(tw, _v);
         const ann = tw.spec === 'b';
@@ -559,7 +587,8 @@ export class GameView {
     }
 
     // gravity wells
-    for (const w of game.wells) {
+    const wells = all('wells'), zones = all('zones');
+    for (const w of wells) {
       let d = this.wellDecals.get(w);
       if (!d) {
         d = this.decals.add({ x: w.x, z: w.z, shape: 2, thick: 0.25, size0: w.r * 2, size1: w.r * 1.6, r: 1.2, g: 0.5, b: 2.4, a: 1, life: w.max, spin: w.pull ? -5 : 3, ease: 0 });
@@ -571,9 +600,9 @@ export class GameView {
         this.parts.spawn(w.x + Math.cos(a) * rr, 0.15, w.z + Math.sin(a) * rr, -Math.cos(a) * rr * 2.4 + Math.sin(a) * 1.5, 0.3, -Math.sin(a) * rr * 2.4 - Math.cos(a) * 1.5, 0.4, 0.08, 0.02, 1.4, 0.6, 2.8, 1, 0, 0, 0.05);
       }
     }
-    if (this.wellDecals.size > game.wells.length) for (const k of this.wellDecals.keys()) if (!game.wells.includes(k)) this.wellDecals.delete(k);
+    if (this.wellDecals.size > wells.length) for (const k of this.wellDecals.keys()) if (!wells.includes(k)) this.wellDecals.delete(k);
     // zones: napalm fire, radiation
-    for (const z of game.zones) {
+    for (const z of zones) {
       let d = this.zoneDecals.get(z);
       if (!d) {
         if (z.kind === 'fire') d = this.decals.add({ x: z.x, z: z.z, shape: 0, size0: z.r * 2.2, size1: z.r * 2, r: 1.6, g: 0.5, b: 0.08, a: 1, life: z.max, ease: 0 });
@@ -589,10 +618,10 @@ export class GameView {
         else this.parts.spawn(x, 0.05, zz, 0, 0.6, 0, 0.6, 0.08, 0.02, 1.2, 2, 0.3, 1, 0.5, -0.2);
       }
     }
-    if (this.zoneDecals.size > game.zones.length) for (const k of this.zoneDecals.keys()) if (!game.zones.includes(k)) this.zoneDecals.delete(k);
+    if (this.zoneDecals.size > zones.length) for (const k of this.zoneDecals.keys()) if (!zones.includes(k)) this.zoneDecals.delete(k);
 
     // per-tower continuous effects
-    for (const tw of game.towers) {
+    for (const tw of towers) {
       if (tw.flameOn) {
         const m = this.towers.muzzle(tw, _v);
         const s = tw.stats;
@@ -617,7 +646,7 @@ export class GameView {
       // power node pulse under towers
     }
     // enemy statuses: burning, marked
-    for (const e of game.enemies) {
+    for (const e of enemies) {
       if (e.inWarp) continue;
       if (e.burnT > 0 && Math.random() < 0.5 * fx * e.burnStacks) this.parts.spawn(e.x + (Math.random() - 0.5) * 0.25, 0.2 + Math.random() * 0.3, e.z + (Math.random() - 0.5) * 0.25, 0, 0.9, 0, 0.35, 0.1, 0.03, 2.8, 1, 0.2, 1, 1, -0.6);
       if (e.markAmt > 0 && e.detected !== false) {

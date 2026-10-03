@@ -10,6 +10,7 @@ import { MUTATORS } from './core/waves.js';
 import { AudioEngine, setVibration } from './audio/audio.js';
 import { Screens } from './ui/screens.js';
 import { Session } from './session.js';
+import { VersusSession } from './versusSession.js';
 import { h } from './ui/dom.js';
 
 const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : 'dev';
@@ -58,6 +59,9 @@ class App {
     window.addEventListener('resize', () => this.onResize());
     this.onResize();
     this.screens.title();
+    // shared invite link (web version): ?room=12345 opens the online lobby and joins that room
+    const invite = new URLSearchParams(location.search).get('room');
+    if (invite && /^\d{5}$/.test(invite)) this.screens.versusOnline({ join: invite });
     // the audio engine renders its sounds/score in the background (first launch only; later cached)
     this.audio.prepare((p) => { this.audioProgress = p; if (this.onAudioProgress) this.onAudioProgress(p); });
     document.getElementById('boot').classList.add('hide');
@@ -149,6 +153,16 @@ class App {
   restart() {
     const s = this.lastStart;
     if (s) this.startLevel(s.id, s.difficulty, s.endless, null, s.loadout);
+  }
+
+  // Versus (practice vs AI or online): opts as documented in VersusSession.
+  startVersus(opts) {
+    this.endSession();
+    this.disposeMenu();
+    this.screens.clear();
+    this.screens.closeAllModals();
+    this.lastVersus = opts;
+    this.session = new VersusSession(this, opts);
   }
 
   endSession() {
