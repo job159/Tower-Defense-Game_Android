@@ -1,0 +1,627 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#070914">
+<title>部署全攻略</title>
+<meta name="description" content="霓虹防線 NEON BASTION 的開源與永久下載部署流程：做了什麼、為什麼這樣做、以後怎麼更新。">
+<style>
+:root {
+  --bg: #070914;
+  --bg2: #0c1024;
+  --panel: #111733;
+  --panel2: #161d40;
+  --line: rgba(120, 200, 255, 0.18);
+  --text: #e2e9fb;
+  --muted: #9aa8cc;
+  --cyan: #22e6ff;
+  --magenta: #ff3dcb;
+  --gold: #ffd23d;
+  --green: #45ffb0;
+  --red: #ff5a7a;
+  --violet: #a98bff;
+  --code-bg: #0a0e20;
+  --radius: 14px;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); color-scheme: dark; scroll-behavior: smooth; -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; color: var(--text); background:
+    radial-gradient(80% 40% at 50% -10%, rgba(34, 230, 255, 0.12), transparent 70%),
+    radial-gradient(60% 30% at 100% 0%, rgba(255, 61, 203, 0.08), transparent 70%),
+    var(--bg);
+  font: 16px/1.75 system-ui, -apple-system, "Segoe UI", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+}
+a { color: var(--cyan); text-underline-offset: 3px; }
+a:hover { color: #8ff4ff; }
+code, pre, kbd { font-family: ui-monospace, "Cascadia Mono", "SFMono-Regular", Consolas, monospace; }
+code { background: rgba(255, 255, 255, 0.08); padding: 1px 6px; border-radius: 6px; font-size: 0.9em; overflow-wrap: anywhere; }
+b, strong { color: #fff; }
+
+/* ---------- layout ---------- */
+.wrap { max-width: 1180px; margin: 0 auto; padding: 0 16px; display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 40px; }
+nav.toc { position: sticky; top: 0; align-self: start; max-height: 100vh; overflow: auto; padding: 28px 0 40px; }
+nav.toc h2 { font-size: 13px; letter-spacing: 0.18em; color: var(--muted); margin: 0 0 10px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: t; }
+nav.toc li { counter-increment: t; }
+nav.toc a { display: block; padding: 6px 10px; border-radius: 8px; color: var(--muted); text-decoration: none; font-size: 14px; line-height: 1.5; }
+nav.toc a::before { content: counter(t, decimal-leading-zero) "  "; color: rgba(34, 230, 255, 0.55); font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+nav.toc a:hover, nav.toc a.on { color: #fff; background: rgba(34, 230, 255, 0.1); }
+main { min-width: 0; padding: 28px 0 80px; }
+@media (max-width: 900px) {
+  .wrap { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  nav.toc { position: static; max-height: none; padding: 20px 0 0; }
+  nav.toc ol { display: flex; flex-wrap: wrap; gap: 6px; }
+  nav.toc a { border: 1px solid var(--line); padding: 4px 10px; font-size: 13px; }
+}
+
+/* ---------- hero ---------- */
+header.hero { padding: 24px 0 8px; }
+.kicker { font: 700 12px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.4em; color: var(--magenta); }
+h1 { margin: 10px 0 8px; font-size: clamp(28px, 5vw, 44px); line-height: 1.2; letter-spacing: 0.06em;
+  text-shadow: 0 0 18px rgba(34, 230, 255, 0.45); }
+.lead { color: var(--muted); font-size: 17px; margin: 0 0 18px; }
+.links { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 18px 0 8px; }
+.links a { display: block; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); text-decoration: none; color: var(--text); }
+.links a small { display: block; color: var(--muted); font-size: 12px; letter-spacing: 0.08em; }
+.links a span { display: block; color: var(--cyan); font-size: 14px; overflow-wrap: anywhere; }
+.links a:hover { border-color: rgba(34, 230, 255, 0.6); }
+
+/* ---------- sections ---------- */
+section { padding-top: 34px; }
+h2.sec { font-size: clamp(22px, 3.4vw, 28px); margin: 0 0 6px; letter-spacing: 0.04em; display: flex; align-items: baseline; gap: 12px; }
+h2.sec .n { font: 700 14px/1 ui-monospace, Consolas, monospace; color: var(--magenta); padding: 4px 8px; border: 1px solid rgba(255, 61, 203, 0.5); border-radius: 8px; }
+.sub { color: var(--muted); margin: 0 0 18px; }
+h3 { font-size: 18px; margin: 26px 0 8px; color: #fff; }
+p { margin: 0 0 12px; }
+ul, ol { padding-left: 1.3em; margin: 0 0 12px; }
+li { margin: 4px 0; }
+
+/* ---------- pipeline diagram ---------- */
+.lanes { display: grid; gap: 14px; margin: 8px 0 12px; }
+.lane { border: 1px solid var(--line); border-radius: var(--radius); background: var(--bg2); padding: 14px; container-type: inline-size; }
+.lane h4 { margin: 0 0 10px; font-size: 14px; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.lane h4 b { color: var(--lc, var(--cyan)); }
+.flow { display: flex; align-items: stretch; gap: 0; }
+.node { flex: 1 1 0; min-width: 0; padding: 12px 12px 10px; border-radius: 12px; background: var(--panel);
+  border: 1px solid color-mix(in srgb, var(--nc, var(--cyan)) 55%, transparent); box-shadow: 0 0 18px color-mix(in srgb, var(--nc, var(--cyan)) 14%, transparent); }
+.node .t { font-weight: 800; color: #fff; font-size: 15px; line-height: 1.35; }
+.node .d { color: var(--muted); font-size: 13px; line-height: 1.5; margin-top: 4px; }
+.node .d code { font-size: 12px; }
+.arrow { flex: 0 0 56px; display: flex; flex-direction: column; align-items: center; justify-content: center; color: var(--muted); font-size: 11px; line-height: 1.3; text-align: center; padding: 0 4px; }
+.arrow::after { content: ""; display: block; width: 100%; height: 2px; margin-top: 6px;
+  background: linear-gradient(90deg, transparent, var(--nc, var(--cyan))); -webkit-mask: linear-gradient(#000, #000); }
+.arrow i { font-style: normal; color: var(--text); font-family: ui-monospace, Consolas, monospace; font-size: 11px; }
+.arrow::before { content: "▶"; order: 3; color: var(--nc, var(--cyan)); font-size: 12px; margin-top: -9px; align-self: flex-end; }
+/* each lane turns vertical when it gets too narrow for its number of boxes */
+@container (max-width: 820px) {
+  .f5 { flex-direction: column; }
+  .f5 > .arrow { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 6px 0; justify-content: flex-start; }
+  .f5 > .arrow::after { display: none; }
+  .f5 > .arrow::before { content: "▼"; order: -1; margin: 0; align-self: center; }
+}
+@container (max-width: 640px) {
+  .f4 { flex-direction: column; }
+  .f4 > .arrow { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 6px 0; justify-content: flex-start; }
+  .f4 > .arrow::after { display: none; }
+  .f4 > .arrow::before { content: "▼"; order: -1; margin: 0; align-self: center; }
+}
+@container (max-width: 380px) {
+  .f2 { flex-direction: column; }
+  .f2 > .arrow { flex: 0 0 auto; flex-direction: row; gap: 8px; padding: 6px 0; justify-content: flex-start; }
+  .f2 > .arrow::after { display: none; }
+  .f2 > .arrow::before { content: "▼"; order: -1; margin: 0; align-self: center; }
+}
+.pc { --nc: #22e6ff; }
+.gh { --nc: #a98bff; }
+.web { --nc: #45ffb0; }
+.rel { --nc: #ffd23d; }
+.phone { --nc: #ff3dcb; }
+.lock { color: var(--gold); }
+
+/* ---------- cards ---------- */
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }
+.card { border: 1px solid var(--line); border-radius: var(--radius); background: var(--panel); padding: 16px 16px 10px; }
+.card h4 { margin: 0 0 6px; font-size: 16px; color: #fff; }
+.card .why { color: var(--muted); font-size: 14px; }
+.card .tag { display: inline-block; font-size: 11px; letter-spacing: 0.1em; padding: 1px 8px; border-radius: 999px; margin-bottom: 8px;
+  color: var(--tc, var(--cyan)); border: 1px solid color-mix(in srgb, var(--tc, var(--cyan)) 60%, transparent); }
+
+/* ---------- callouts ---------- */
+.note { border-left: 3px solid var(--cc, var(--cyan)); background: color-mix(in srgb, var(--cc, var(--cyan)) 8%, var(--bg2)); border-radius: 0 12px 12px 0; padding: 12px 16px; margin: 14px 0; }
+.note .h { font-weight: 800; color: var(--cc, var(--cyan)); margin-bottom: 4px; letter-spacing: 0.04em; }
+.note p:last-child, .note ul:last-child { margin-bottom: 0; }
+.note.warn { --cc: var(--gold); }
+.note.danger { --cc: var(--red); }
+.note.ok { --cc: var(--green); }
+
+/* ---------- steps ---------- */
+.steps { list-style: none; padding: 0; margin: 0; counter-reset: s; }
+.steps > li { counter-increment: s; position: relative; padding: 0 0 22px 52px; margin: 0; }
+.steps > li::before { content: counter(s); position: absolute; left: 0; top: 0; width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center;
+  font-weight: 900; color: var(--magenta); border: 1px solid rgba(255, 61, 203, 0.6); box-shadow: 0 0 12px rgba(255, 61, 203, 0.25) inset; }
+.steps > li::after { content: ""; position: absolute; left: 17px; top: 40px; bottom: 4px; width: 2px; background: linear-gradient(rgba(255, 61, 203, 0.4), transparent); }
+.steps > li:last-child::after { display: none; }
+.steps .st { font-weight: 800; color: #fff; font-size: 17px; }
+.who { display: inline-block; font-size: 11px; padding: 0 7px; border-radius: 999px; margin-left: 6px; vertical-align: 2px; letter-spacing: 0.06em; }
+.who.me { color: var(--cyan); border: 1px solid rgba(34, 230, 255, 0.55); }
+.who.you { color: var(--magenta); border: 1px solid rgba(255, 61, 203, 0.6); }
+.who.bot { color: var(--green); border: 1px solid rgba(69, 255, 176, 0.55); }
+
+/* ---------- code ---------- */
+.code { position: relative; margin: 10px 0 14px; }
+.code pre { margin: 0; padding: 14px 16px; padding-right: 64px; background: var(--code-bg); border: 1px solid var(--line); border-radius: 12px; overflow-x: auto; font-size: 13.5px; line-height: 1.6; color: #d8e6ff; }
+.code pre .c { color: #6f7fa8; }
+.code button { position: absolute; top: 8px; right: 8px; font: 600 12px/1 system-ui, sans-serif; color: var(--muted); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; cursor: pointer; }
+.code button:hover { color: #fff; border-color: rgba(34, 230, 255, 0.6); }
+.code .lang { position: absolute; left: 12px; top: -9px; font: 700 10px/1 ui-monospace, Consolas, monospace; letter-spacing: 0.12em; padding: 2px 6px; border-radius: 6px; background: var(--bg); color: var(--muted); border: 1px solid var(--line); }
+
+/* ---------- tables ---------- */
+.tbl { overflow-x: auto; margin: 8px 0 16px; border: 1px solid var(--line); border-radius: 12px; }
+table { width: 100%; border-collapse: collapse; min-width: 560px; font-size: 14px; }
+th, td { padding: 10px 12px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+th { background: var(--panel2); color: #fff; font-weight: 700; white-space: nowrap; }
+tr:last-child td { border-bottom: 0; }
+tr.hl td { background: rgba(34, 230, 255, 0.07); }
+.y { color: var(--green); font-weight: 700; }
+.n { color: var(--red); font-weight: 700; }
+.m { color: var(--gold); font-weight: 700; }
+
+/* ---------- timeline ---------- */
+.tl { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; margin: 12px 0; }
+.tl div { border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px; background: var(--bg2); }
+.tl b { display: block; font-size: 13px; color: var(--cyan); letter-spacing: 0.06em; }
+.tl span { font-size: 13px; color: var(--muted); }
+
+dl.gloss { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 8px 18px; margin: 8px 0; }
+dl.gloss dt { font-weight: 800; color: #fff; }
+dl.gloss dd { margin: 0; color: var(--muted); }
+@media (max-width: 560px) { dl.gloss { grid-template-columns: minmax(0, 1fr); } dl.gloss dd { margin-bottom: 8px; } }
+
+footer { margin-top: 48px; padding-top: 18px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+
+@media print {
+  html, body { background: #fff; color: #111; }
+  nav.toc, .code button { display: none; }
+  .wrap { display: block; }
+  .card, .lane, .node, .note, .code pre, .tl div { background: #fff; color: #111; border-color: #bbb; box-shadow: none; }
+  b, strong, h3, .node .t, .card h4, .steps .st { color: #000; }
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+<nav class="toc" aria-label="目錄">
+  <h2>目錄</h2>
+  <ol>
+    <li><a href="#overview">三分鐘看懂</a></li>
+    <li><a href="#why">為什麼這樣部署</a></li>
+    <li><a href="#compare">方案比較</a></li>
+    <li><a href="#parts">每個零件是什麼</a></li>
+    <li><a href="#setup">我做了哪些事</a></li>
+    <li><a href="#update">以後怎麼出新版</a></li>
+    <li><a href="#inside">指令背後發生什麼</a></li>
+    <li><a href="#files">檔案地圖</a></li>
+    <li><a href="#security">安全與隱私</a></li>
+    <li><a href="#faq">疑難排解</a></li>
+    <li><a href="#longterm">長期維護清單</a></li>
+    <li><a href="#glossary">名詞小辭典</a></li>
+  </ol>
+</nav>
+
+<main>
+<header class="hero">
+  <div class="kicker">NEON BASTION · DEPLOYMENT GUIDE</div>
+  <h1>霓虹防線 部署全攻略</h1>
+  <p class="lead">這份文件說明「開源到 GitHub、任何網路都能掃 QR 碼下載、長期不失效」是怎麼做到的：每一步做了什麼、為什麼要這樣設計，以及以後出新版時該怎麼操作。</p>
+  <div class="links">
+    <a href="https://job159.github.io/Tower-Defense-Game_Android/"><small>下載頁（QR 碼指向這裡）</small><span>job159.github.io/Tower-Defense-Game_Android/</span></a>
+    <a href="https://job159.github.io/Tower-Defense-Game_Android/play/"><small>瀏覽器直接玩</small><span>…/Tower-Defense-Game_Android/play/</span></a>
+    <a href="https://github.com/job159/Tower-Defense-Game_Android"><small>原始碼（MIT 開源）</small><span>github.com/job159/Tower-Defense-Game_Android</span></a>
+    <a href="https://github.com/job159/Tower-Defense-Game_Android/releases"><small>所有版本（APK）</small><span>…/Tower-Defense-Game_Android/releases</span></a>
+  </div>
+</header>
+
+<!-- ================================================================ 1 -->
+<section id="overview">
+  <h2 class="sec"><span class="n">01</span>三分鐘看懂</h2>
+  <p class="sub">整個部署其實是三條線：網站線、APK 線、玩家線。</p>
+
+  <div class="lanes">
+    <div class="lane" style="--lc: var(--green)">
+      <h4>線 A · <b>網站</b>：原始碼一推上去，下載頁和網頁版就自動更新</h4>
+      <div class="flow f4">
+        <div class="node pc"><div class="t">你的電腦</div><div class="d">改好程式碼<br><code>git push</code></div></div>
+        <div class="arrow pc"><i>git push</i></div>
+        <div class="node gh"><div class="t">GitHub 儲存庫</div><div class="d">存放原始碼與所有版本紀錄（公開、MIT）</div></div>
+        <div class="arrow gh"><i>自動觸發</i></div>
+        <div class="node web"><div class="t">GitHub Actions</div><div class="d">雲端機器人建置網頁版和下載頁</div></div>
+        <div class="arrow web"><i>部署</i></div>
+        <div class="node web"><div class="t">GitHub Pages</div><div class="d">下載頁 <code>/</code><br>網頁版 <code>/play/</code></div></div>
+      </div>
+    </div>
+
+    <div class="lane" style="--lc: var(--gold)">
+      <h4>線 B · <b>APK</b>：在你的電腦簽署，只上傳簽好的成品</h4>
+      <div class="flow f2">
+        <div class="node pc"><div class="t">你的電腦</div><div class="d"><code>npm run build</code><br>用 <span class="lock">🔒 簽署金鑰</span> 簽 APK</div></div>
+        <div class="arrow rel"><i>npm run release</i></div>
+        <div class="node rel"><div class="t">GitHub Releases</div><div class="d">每個版本一份 <code>NeonBastion.apk</code><br><code>latest</code> 永遠指向最新版</div></div>
+      </div>
+    </div>
+
+    <div class="lane" style="--lc: var(--magenta)">
+      <h4>線 C · <b>玩家</b>：掃一次 QR 碼就能下載，永遠拿到最新版</h4>
+      <div class="flow f5">
+        <div class="node phone"><div class="t">手機掃 QR 碼</div><div class="d">任何網路（4G／5G／Wi-Fi）</div></div>
+        <div class="arrow phone"><i>開啟</i></div>
+        <div class="node web"><div class="t">下載頁（Pages）</div><div class="d">顯示版本、大小、安裝步驟</div></div>
+        <div class="arrow rel"><i>按下載</i></div>
+        <div class="node rel"><div class="t">Releases 最新版</div><div class="d"><code>/releases/latest/download/NeonBastion.apk</code></div></div>
+        <div class="arrow phone"><i>安裝</i></div>
+        <div class="node phone"><div class="t">覆蓋安裝</div><div class="d">存檔保留</div></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="note ok">
+    <div class="h">一句話總結</div>
+    <p>程式碼放 GitHub、網站交給 GitHub Pages 自動部署、APK 在本機簽好再放 GitHub Releases；QR 碼指向一個「永遠不變的下載頁」，下載頁再連到「永遠是最新版」的 APK。所以 QR 碼印一次就能一直用。</p>
+  </div>
+</section>
+
+<!-- ================================================================ 2 -->
+<section id="why">
+  <h2 class="sec"><span class="n">02</span>為什麼要這樣部署</h2>
+  <p class="sub">這套做法背後有五個原則，每個決定都能對應到其中之一。</p>
+
+  <div class="grid">
+    <div class="card"><span class="tag" style="--tc: var(--gold)">原則 1</span><h4>秘密只留在本機</h4>
+      <p class="why">簽署金鑰就是 App 的「身分證」。它一旦外流，別人就能冒充你發佈「更新」；它一旦遺失，你自己也再也無法更新已安裝的 App。所以金鑰<b>不上傳 GitHub、不放雲端機器人</b>，APK 一律在你的電腦簽好才上傳。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--green)">原則 2</span><h4>能自動的都自動</h4>
+      <p class="why">網頁版和下載頁不需要任何秘密，就交給 GitHub Actions：每次 <code>git push</code> 自動重建、自動上線。你不用手動上傳網站檔案，也不會忘記更新。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--magenta)">原則 3</span><h4>永久網址不綁版本</h4>
+      <p class="why">QR 碼指向「下載頁」而不是某個 APK 檔；下載頁的按鈕用 <code>releases/latest/download/…</code>，GitHub 會自動導向最新版本。出新版時什麼網址都不用改，舊的 QR 碼照樣有效。</p></div>
+    <div class="card"><span class="tag">原則 4</span><h4>免費、可靠、不會過期</h4>
+      <p class="why">GitHub Pages 與 Releases 對公開專案完全免費、沒有到期日、全程 HTTPS、有全球 CDN，不需要自己維護伺服器，電腦也不必開著。只要 repo 還在，連結就一直有效。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--violet)">原則 5</span><h4>一個地方管全部、任何人都能重現</h4>
+      <p class="why">原始碼、版本紀錄、網站、安裝檔都在同一個 GitHub 專案裡。建置步驟寫成腳本與工作流程，別人 fork 後照著做就能得到一樣的結果（他們會自動產生自己的金鑰）。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--red)">附帶</span><h4>保留「不安裝也能玩」的退路</h4>
+      <p class="why">網頁版和下載頁一起部署。如果某天手機不允許側載安裝、或朋友用 iPhone／電腦，打開 <code>/play/</code> 就能直接玩。</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ 3 -->
+<section id="compare">
+  <h2 class="sec"><span class="n">03</span>方案比較</h2>
+  <p class="sub">「讓任何人掃碼下載 APK」有很多種做法。這張表說明為什麼選 GitHub Pages ＋ Releases。</p>
+  <div class="tbl"><table>
+    <thead><tr><th>方案</th><th>任何網路</th><th>長期有效</th><th>費用</th><th>電腦要開著</th><th>缺點</th></tr></thead>
+    <tbody>
+      <tr><td>區網伺服器（<code>npm run serve</code>，之前用的）</td><td class="n">只限同一個 Wi-Fi</td><td class="n">關機就沒了</td><td class="y">免費</td><td class="n">要</td><td>只適合開發測試</td></tr>
+      <tr><td>雲端硬碟／網盤分享連結</td><td class="y">可以</td><td class="m">可能被停用或判定可疑</td><td class="y">免費</td><td class="y">不用</td><td>每次新版都要換連結、APK 常被警告、無法自動化</td></tr>
+      <tr><td>自己租伺服器（VPS）</td><td class="y">可以</td><td class="m">要持續付費續約</td><td class="n">每月付費</td><td class="y">不用</td><td>要自己維護安全更新、網域與憑證</td></tr>
+      <tr><td>Google Play 上架</td><td class="y">可以</td><td class="y">可以</td><td class="m">開發者帳號 US$25（一次）</td><td class="y">不用</td><td>需要審核、隱私政策與測試者規定，流程最正式也最繁瑣</td></tr>
+      <tr class="hl"><td><b>GitHub Pages ＋ Releases（現在的做法）</b></td><td class="y">可以</td><td class="y">repo 在就有效</td><td class="y">免費</td><td class="y">不用</td><td>仍屬「側載安裝」，需允許未知來源（見第 9 節的 Google 新規）</td></tr>
+    </tbody>
+  </table></div>
+  <div class="note"><div class="h">為什麼 APK 放 Releases，而不是直接放進程式碼或網站？</div>
+    <p>APK 是二進位檔，每版都放進 git 會讓版本庫越來越肥大；Releases 是 GitHub 專門給「成品檔案」用的空間：每個版本各自保存、可以寫更新說明，還有 <code>latest</code> 這個永久捷徑。</p>
+  </div>
+</section>
+
+<!-- ================================================================ 4 -->
+<section id="parts">
+  <h2 class="sec"><span class="n">04</span>每個零件是什麼</h2>
+  <p class="sub">部署裡出現的工具，用白話說明各自的角色。</p>
+  <div class="grid">
+    <div class="card"><span class="tag">版本控制</span><h4>Git</h4><p class="why">記錄程式碼每一次變化的工具。每個「commit」是一張快照，可以隨時回到任何版本。你的電腦上原本就有安裝。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--violet)">雲端版本庫</span><h4>GitHub 儲存庫（repo）</h4><p class="why">放在 GitHub 上的 Git 版本庫：<code>job159/Tower-Defense-Game_Android</code>。公開、MIT 授權，任何人都能看、下載、fork。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--green)">自動化</span><h4>GitHub Actions</h4><p class="why">GitHub 提供的雲端機器人。依照 <code>.github/workflows/pages.yml</code> 這份「工作流程」，每次推送就開一台 Linux 虛擬機自動建置網站。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--green)">網站主機</span><h4>GitHub Pages</h4><p class="why">免費的靜態網站主機，網址是 <code>帳號.github.io/專案名/</code>。這裡放下載頁與網頁版遊戲，全程 HTTPS 並有全球 CDN 加速。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--gold)">成品倉庫</span><h4>GitHub Releases</h4><p class="why">存放每個版本的 APK（例如 <code>v2.1.0</code>）。<code>/releases/latest/download/NeonBastion.apk</code> 會自動導向最新一版。</p></div>
+    <div class="card"><span class="tag">指令工具</span><h4>GitHub CLI（gh）</h4><p class="why">在終端機操作 GitHub 的官方工具：登入、開啟 Pages、建立 Release、上傳 APK、查看自動部署結果。安裝在 <code>C:\Program Files\GitHub CLI\gh.exe</code>。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--gold)">身分證</span><h4>簽署金鑰（keystore）</h4><p class="why"><code>android/keystore/release.jks</code> 與 <code>keystore.properties</code>。Android 只接受「同一把金鑰簽署」的更新，所以它決定了你能不能覆蓋安裝新版。只存在你的電腦。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--magenta)">入口</span><h4>QR 碼與下載頁</h4><p class="why">QR 碼（<code>docs/download-qr.png</code>）裡只寫了下載頁網址。下載頁會即時向 GitHub 查詢最新版本號與檔案大小，並提供安裝步驟與網頁版入口。</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ 5 -->
+<section id="setup">
+  <h2 class="sec"><span class="n">05</span>我做了哪些事（一次性設定）</h2>
+  <p class="sub">以下是這次實際執行的步驟，照順序排列。標籤說明是誰做的：<span class="who me">Claude</span> <span class="who you">你</span> <span class="who bot">GitHub 自動</span></p>
+
+  <ol class="steps">
+    <li><div class="st">檢查環境 <span class="who me">Claude</span></div>
+      <p>確認電腦已有 Git，但沒有 GitHub CLI；也發現你的全域 git email 是真實信箱——公開 repo 裡每個 commit 都看得到它，所以後面改用隱私地址。</p></li>
+
+    <li><div class="st">安裝 GitHub CLI <span class="who me">Claude</span></div>
+      <p>用 Windows 內建的 winget 從官方來源安裝（會驗證安裝檔雜湊值）。</p>
+      <div class="code"><span class="lang">POWERSHELL</span><pre>winget install --id GitHub.cli -e --source winget</pre><button type="button">複製</button></div></li>
+
+    <li><div class="st">登入 GitHub <span class="who you">你</span></div>
+      <p>這一步只能由你做：程式不能代你輸入帳密。指令會產生一次性代碼，你在瀏覽器輸入並授權，GitHub 發給這台電腦一張「通行證」（token），存在 Windows 認證管理員裡。</p>
+      <div class="code"><span class="lang">POWERSHELL</span><pre>&amp; "C:\Program Files\GitHub CLI\gh.exe" auth login --hostname github.com --git-protocol https --web</pre><button type="button">複製</button></div>
+      <div class="note"><div class="h">為什麼用 --web 裝置授權？</div><p>密碼從頭到尾只在 GitHub 官網輸入；這台電腦只拿到權限有限、可以隨時撤銷的 token（本次權限：<code>repo</code>、<code>workflow</code>、<code>read:org</code>、<code>gist</code>）。</p></div></li>
+
+    <li><div class="st">整理專案，決定「什麼能公開」 <span class="who me">Claude</span></div>
+      <ul>
+        <li><code>.gitignore</code>：排除 <code>node_modules/</code>（可重新安裝）、<code>dist/</code> 與 <code>build/</code>（建置產物）、<b>簽署金鑰</b>（<code>android/keystore/</code>、<code>*.jks</code>、<code>keystore.properties</code>）、<code>*.apk</code>、本機工具設定 <code>.claude/</code>。</li>
+        <li><code>.gitattributes</code>：統一換行字元，避免 Windows（CRLF）與 GitHub 的 Linux 機器（LF）互相打架。</li>
+        <li><code>LICENSE</code>：MIT 授權全文。</li>
+        <li><code>package.json</code>：加上 <code>homepage</code>、<code>repository</code>、<code>license</code>，以及 <code>build:site</code>、<code>release</code> 兩個新指令。</li>
+        <li>掃描所有原始碼，確認沒有密碼、token、個人 email 或私人路徑。</li>
+      </ul></li>
+
+    <li><div class="st">寫好三支部署腳本 <span class="who me">Claude</span></div>
+      <ul>
+        <li><code>scripts/build-site.mjs</code>：產生公開下載頁＋網頁版到 <code>dist/site/</code>。</li>
+        <li><code>.github/workflows/pages.yml</code>：告訴 GitHub Actions 每次推送時怎麼建置與部署。</li>
+        <li><code>scripts/release.mjs</code>：把本機簽好的 APK 發佈成 GitHub Release。</li>
+      </ul>
+      <p>另外把區網伺服器與公開下載頁共用的外觀抽到 <code>scripts/site-common.mjs</code>，兩個頁面長得一樣，只需要維護一份。</p></li>
+
+    <li><div class="st">在本機測試網站 <span class="who me">Claude</span></div>
+      <p>用一個模擬 GitHub Pages 子路徑（<code>/Tower-Defense-Game_Android/</code>）的本機伺服器，確認下載頁在手機尺寸正常顯示、網頁版能在子路徑下啟動、沒有 Release 時按鈕會顯示「APK 準備中」。</p></li>
+
+    <li><div class="st">建立本機版本庫並提交 <span class="who me">Claude</span></div>
+      <div class="code"><span class="lang">BASH</span><pre>git init -b main
+git config user.email "&lt;帳號ID&gt;+job159@users.noreply.github.com"   <span class="c"># 只對這個專案生效</span>
+git add -A
+git commit -m "霓虹防線 NEON BASTION v2.1.0"</pre><button type="button">複製</button></div>
+      <p>提交前再次確認：59 個檔案中沒有金鑰、APK、<code>node_modules</code> 或建置產物。</p></li>
+
+    <li><div class="st">開啟 GitHub Pages（Actions 模式） <span class="who me">Claude</span></div>
+      <div class="code"><span class="lang">BASH</span><pre>gh api -X POST repos/job159/Tower-Defense-Game_Android/pages -f build_type=workflow</pre><button type="button">複製</button></div>
+      <p>「workflow」模式代表網站內容由 Actions 建置後上傳，而不是直接把某個分支的檔案原樣公開——這樣 repo 裡只需要放原始碼，不必提交建置產物。</p></li>
+
+    <li><div class="st">推送到 GitHub <span class="who me">Claude</span></div>
+      <div class="code"><span class="lang">BASH</span><pre>git remote add origin https://github.com/job159/Tower-Defense-Game_Android.git
+git push -u origin main</pre><button type="button">複製</button></div></li>
+
+    <li><div class="st">自動建置與部署網站 <span class="who bot">GitHub 自動</span></div>
+      <p>推送觸發 <code>pages.yml</code>：安裝套件 → 建置網頁版 → 產生下載頁 → 上傳 → 部署到 Pages。這次整個流程約一分鐘完成。</p></li>
+
+    <li><div class="st">發佈 APK <span class="who me">Claude</span></div>
+      <div class="code"><span class="lang">BASH</span><pre>npm run release -- --notes "本版重點……"</pre><button type="button">複製</button></div>
+      <p>建立 Release <code>v2.1.0</code> 並附上本機簽署的 <code>NeonBastion.apk</code>（305 KB）。</p></li>
+
+    <li><div class="st">從外部網路驗證 <span class="who me">Claude</span></div>
+      <ul>
+        <li>下載頁、網頁版、<code>game.js</code> 都回應 200。</li>
+        <li>透過 <code>latest/download</code> 下載到的 APK，與本機簽署的檔案<b>逐位元組相同</b>。</li>
+        <li>線上下載頁正確顯示 v2.1.0、305 KB、發佈日期。</li>
+      </ul></li>
+  </ol>
+</section>
+
+<!-- ================================================================ 6 -->
+<section id="update">
+  <h2 class="sec"><span class="n">06</span>以後怎麼出新版</h2>
+  <p class="sub">四個步驟。在專案資料夾 <code>C:\code\phone\app1</code> 開終端機執行。</p>
+
+  <ol class="steps">
+    <li><div class="st">改版本號</div>
+      <p>打開 <code>package.json</code>，把 <code>"version"</code> 改大，例如 <code>2.1.0</code> → <code>2.1.1</code>。</p>
+      <div class="note warn"><div class="h">版本號規則</div><p>Android 內部版本 <code>versionCode = 主版號×10000 ＋ 次版號×100 ＋ 修訂號</code>（2.1.1 → 20101）。所以次版號與修訂號都必須 ≤ 99；而且新版必須比手機上的舊版大，否則無法覆蓋安裝。</p></div></li>
+    <li><div class="st">建置（網頁版＋簽署 APK）</div>
+      <div class="code"><span class="lang">POWERSHELL</span><pre>npm run build</pre><button type="button">複製</button></div></li>
+    <li><div class="st">提交並推送原始碼 → 網站自動更新</div>
+      <div class="code"><span class="lang">POWERSHELL</span><pre>git add -A
+git commit -m "v2.1.1：更新內容"
+git push</pre><button type="button">複製</button></div></li>
+    <li><div class="st">發佈 APK → 下載頁自動指向新版</div>
+      <div class="code"><span class="lang">POWERSHELL</span><pre>npm run release -- --notes "v2.1.1 更新內容"</pre><button type="button">複製</button></div>
+      <p>若同一個版本號已經發佈過，這個指令會改成「替換 APK」而不是新建。</p></li>
+  </ol>
+
+  <h3>推送後大約會發生什麼</h3>
+  <div class="tl">
+    <div><b>0 秒</b><span>git push 完成，GitHub 收到新 commit</span></div>
+    <div><b>約 5 秒</b><span>Actions 啟動 Linux 機器，開始建置</span></div>
+    <div><b>約 1 分鐘</b><span>網站部署完成，下載頁與網頁版更新</span></div>
+    <div><b>1～2 分鐘</b><span>CDN 快取更新，全球都看到新版</span></div>
+    <div><b>release 後立即</b><span>下載頁的按鈕改為新版 APK</span></div>
+  </div>
+  <div class="note ok"><div class="h">手機端</div><p>玩家用同一個 QR 碼（或書籤）打開下載頁 → 下載 → 直接覆蓋安裝，遊戲進度會保留。</p></div>
+</section>
+
+<!-- ================================================================ 7 -->
+<section id="inside">
+  <h2 class="sec"><span class="n">07</span>每個指令背後發生什麼</h2>
+
+  <h3><code>npm run build</code> = 建網頁版 ＋ 建 APK</h3>
+  <p><b>① <code>build:web</code>（scripts/build-web.mjs）</b>：用 esbuild 把 <code>game/src/</code> 裡的所有 JavaScript（含 three.js）打包、壓縮成單一 <code>game.js</code>，連同 <code>index.html</code>、<code>style.css</code> 輸出到 <code>dist/www/</code>，並把版本號寫進遊戲。</p>
+  <p><b>② <code>build:apk</code>（scripts/build-apk.ps1）</b>：不用 Android Studio／Gradle，直接呼叫 Android SDK 的工具：</p>
+  <div class="tbl"><table>
+    <thead><tr><th>步驟</th><th>工具</th><th>做什麼</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><code>aapt2 compile / link</code></td><td>編譯圖示、字串等資源，產生 AndroidManifest 與資源表</td></tr>
+      <tr><td>2</td><td><code>javac</code></td><td>編譯 WebView 外殼 <code>MainActivity.java</code></td></tr>
+      <tr><td>3</td><td><code>d8</code></td><td>把 Java 位元碼轉成 Android 使用的 <code>classes.dex</code></td></tr>
+      <tr><td>4</td><td>打包</td><td>把 dex 與 <code>dist/www/</code> 網頁版放進 APK 的 <code>assets/www/</code></td></tr>
+      <tr><td>5</td><td><code>zipalign</code></td><td>對齊檔案，讓 Android 能更快讀取</td></tr>
+      <tr><td>6</td><td><code>apksigner</code></td><td>用 🔒 <code>android/keystore/</code> 的金鑰簽署並驗證 → <code>dist/NeonBastion.apk</code></td></tr>
+    </tbody>
+  </table></div>
+
+  <h3><code>git push</code> 觸發的 GitHub Actions（.github/workflows/pages.yml）</h3>
+  <div class="tbl"><table>
+    <thead><tr><th>步驟</th><th>動作</th><th>為什麼</th></tr></thead>
+    <tbody>
+      <tr><td><code>actions/checkout@v7</code></td><td>下載 repo 的原始碼</td><td>雲端機器是全新的空機器</td></tr>
+      <tr><td><code>actions/setup-node@v7</code></td><td>安裝 Node.js 22</td><td>建置腳本需要 Node</td></tr>
+      <tr><td><code>npm ci</code></td><td>依照 <code>package-lock.json</code> 精確安裝套件</td><td>每次建置用的套件版本完全一致</td></tr>
+      <tr><td><code>node scripts/build-web.mjs</code></td><td>建網頁版</td><td>與本機相同的建置流程</td></tr>
+      <tr><td><code>node scripts/build-site.mjs</code></td><td>產生下載頁＋把網頁版放到 <code>play/</code></td><td>組成完整網站 <code>dist/site/</code></td></tr>
+      <tr><td><code>configure-pages@v6</code><br><code>upload-pages-artifact@v5</code><br><code>deploy-pages@v5</code></td><td>上傳並部署到 Pages</td><td>GitHub 官方的部署方式，只有這個流程有權限發佈網站</td></tr>
+    </tbody>
+  </table></div>
+  <p>這個工作流程<b>不會</b>建 APK——雲端機器沒有你的金鑰，也不應該有。</p>
+
+  <h3><code>npm run build:site</code>（scripts/build-site.mjs）</h3>
+  <ul>
+    <li>從 <code>package.json</code> 的 <code>repository</code>（或 Actions 提供的 <code>GITHUB_REPOSITORY</code>）算出網址。</li>
+    <li>產生 <code>index.html</code>：下載按鈕連到 <code>/releases/latest/download/NeonBastion.apk</code>，並內嵌此頁網址的 QR 碼（電腦螢幕上才顯示，方便用手機掃）。</li>
+    <li>頁面開啟時，瀏覽器向 <code>api.github.com</code> 查詢最新 Release，填入版本號、檔案大小、發佈日期；查不到時按鈕照樣能下載。</li>
+    <li>複製 <code>dist/www/</code> 到 <code>play/</code>，並產生網站圖示與 <code>.nojekyll</code>。</li>
+  </ul>
+
+  <h3><code>npm run release</code>（scripts/release.mjs）</h3>
+  <ul>
+    <li>讀取 <code>package.json</code> 的版本號 → 標籤 <code>v2.1.1</code>。</li>
+    <li>確認 <code>dist/NeonBastion.apk</code> 存在，並找到 <code>gh</code>。</li>
+    <li>如果這個標籤的 Release 還不存在：<code>gh release create</code> 建立並設為「最新版」；已存在就 <code>gh release upload --clobber</code> 替換 APK。</li>
+  </ul>
+
+  <h3>為什麼 <code>latest/download</code> 永遠是最新版？</h3>
+  <p>這是 GitHub 內建的永久捷徑：<code>/releases/latest/download/檔名</code> 會被 GitHub 導向「標記為 Latest 的 Release」裡同名的檔案。只要每個版本的 APK 都叫 <code>NeonBastion.apk</code>，這個網址就不必變。</p>
+</section>
+
+<!-- ================================================================ 8 -->
+<section id="files">
+  <h2 class="sec"><span class="n">08</span>檔案地圖</h2>
+  <div class="tbl"><table>
+    <thead><tr><th>檔案／資料夾</th><th>作用</th><th>公開？</th></tr></thead>
+    <tbody>
+      <tr><td><code>game/</code></td><td>遊戲原始碼（邏輯、3D、音效、介面）</td><td class="y">公開</td></tr>
+      <tr><td><code>android/app/</code></td><td>Android WebView 外殼與圖示</td><td class="y">公開</td></tr>
+      <tr><td><code>android/keystore/</code></td><td>🔒 簽署金鑰與密碼</td><td class="n">絕不公開</td></tr>
+      <tr><td><code>scripts/build-web.mjs</code></td><td>建網頁版</td><td class="y">公開</td></tr>
+      <tr><td><code>scripts/build-apk.ps1</code></td><td>建並簽署 APK（第一次執行會產生金鑰）</td><td class="y">公開</td></tr>
+      <tr><td><code>scripts/build-site.mjs</code></td><td>產生公開下載頁＋網頁版</td><td class="y">公開</td></tr>
+      <tr><td><code>scripts/release.mjs</code></td><td>發佈 APK 到 Releases</td><td class="y">公開</td></tr>
+      <tr><td><code>scripts/serve.mjs</code></td><td>區網下載伺服器（開發用，選用）</td><td class="y">公開</td></tr>
+      <tr><td><code>scripts/site-common.mjs</code></td><td>兩個下載頁共用的外觀</td><td class="y">公開</td></tr>
+      <tr><td><code>.github/workflows/pages.yml</code></td><td>自動部署網站的工作流程</td><td class="y">公開</td></tr>
+      <tr><td><code>docs/download-qr.png</code></td><td>永久下載 QR 碼</td><td class="y">公開</td></tr>
+      <tr><td><code>package.json</code></td><td>版本號、指令、專案網址</td><td class="y">公開</td></tr>
+      <tr><td><code>.gitignore</code> / <code>.gitattributes</code> / <code>LICENSE</code></td><td>排除清單／換行規則／MIT 授權</td><td class="y">公開</td></tr>
+      <tr><td><code>dist/</code>、<code>build/</code>、<code>node_modules/</code></td><td>建置產物與套件（隨時可重建）</td><td class="n">不上傳</td></tr>
+    </tbody>
+  </table></div>
+</section>
+
+<!-- ================================================================ 9 -->
+<section id="security">
+  <h2 class="sec"><span class="n">09</span>安全與隱私</h2>
+
+  <div class="note danger"><div class="h">最重要：備份簽署金鑰</div>
+    <p>把整個 <code>android/keystore/</code> 資料夾（<code>release.jks</code> ＋ <code>keystore.properties</code>）備份到<b>至少兩個地方</b>，例如隨身碟加上密碼管理器或私人雲端。遺失後果：所有已安裝的玩家都無法再更新，只能解除安裝（存檔會消失）後重裝。</p>
+    <p>也請不要把 <code>keystore.properties</code> 的內容貼到任何公開地方——它裡面有金鑰密碼。</p>
+  </div>
+
+  <div class="grid">
+    <div class="card"><span class="tag" style="--tc: var(--green)">已處理</span><h4>金鑰不會被上傳</h4><p class="why"><code>.gitignore</code> 排除了金鑰資料夾、<code>*.jks</code>、<code>keystore.properties</code>；提交前也逐一檢查過檔案清單。雲端機器只建網頁版，不接觸金鑰。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--green)">已處理</span><h4>真實 email 不公開</h4><p class="why">這個專案的 commit 使用 GitHub 隱私地址 <code>帳號ID+job159@users.noreply.github.com</code>（只對這個專案設定，其他專案不受影響）。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--gold)">建議</span><h4>開啟 GitHub 兩步驟驗證</h4><p class="why">你的帳號控制著下載頁與 APK。若帳號被盜，別人可以替換下載檔給新玩家。到 GitHub → Settings → Password and authentication 開啟 2FA。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--gold)">知道就好</span><h4>電腦上的登入 token</h4><p class="why"><code>gh</code> 的 token 存在 Windows 認證管理員。不再使用時可執行 <code>gh auth logout</code>，或到 GitHub → Settings → Applications 撤銷。</p></div>
+    <div class="card"><span class="tag" style="--tc: var(--gold)">知道就好</span><h4>Google 側載新規</h4><p class="why">Google 已宣布 Android 將要求側載 App 也必須來自已驗證的開發者：2026 年 9 月起先在巴西、印尼、新加坡、泰國實施，2027 年起逐步擴大到全球。到時若無法直接安裝，可改用網頁版，或做開發者驗證／上架 Google Play。</p></div>
+    <div class="card"><span class="tag">知道就好</span><h4>哪些東西是公開的</h4><p class="why">原始碼、版本紀錄、APK、網站都是公開的；任何人都能下載、修改（MIT 授權只要求保留著作權聲明）。金鑰與你的真實 email 不公開。</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ 10 -->
+<section id="faq">
+  <h2 class="sec"><span class="n">10</span>疑難排解</h2>
+
+  <h3>下載頁沒有更新？</h3>
+  <p>先看自動部署有沒有成功：GitHub 專案頁的 <b>Actions</b> 分頁，或用指令：</p>
+  <div class="code"><span class="lang">POWERSHELL</span><pre>gh run list --workflow pages.yml --limit 5
+gh run view --log-failed          <span class="c"># 看最近一次失敗的錯誤訊息</span>
+gh workflow run pages.yml         <span class="c"># 手動重新部署一次</span></pre><button type="button">複製</button></div>
+  <p>成功後 CDN 可能還要 1～2 分鐘；手機瀏覽器可以重新整理或清除快取。</p>
+
+  <h3>下載頁顯示「APK 準備中」？</h3>
+  <p>代表還沒有任何 Release，執行 <code>npm run release</code> 即可。</p>
+
+  <h3>下載頁只顯示「最新版」、沒有版本號？</h3>
+  <p>GitHub API 對同一個網路每小時有查詢次數上限，暫時查不到時只是少了版本資訊，下載按鈕仍然正常。</p>
+
+  <h3>手機說「應用程式未安裝」或無法覆蓋？</h3>
+  <ul>
+    <li>新版本號沒有比手機上的大（見第 6 節的版本號規則）。</li>
+    <li>APK 用了不同的金鑰簽署（例如金鑰遺失後重新產生）——只能先解除安裝舊版。</li>
+  </ul>
+
+  <h3>終端機說找不到 <code>gh</code>？</h3>
+  <p>剛安裝完的舊終端機不知道新路徑。關掉重開，或直接用完整路徑：<code>&amp; "C:\Program Files\GitHub CLI\gh.exe" …</code>。<code>npm run release</code> 會自動找到它。</p>
+
+  <h3><code>git push</code> 被拒絕？</h3>
+  <div class="code"><span class="lang">POWERSHELL</span><pre>gh auth status        <span class="c"># 確認還在登入狀態、權限包含 repo 與 workflow</span>
+git pull --rebase     <span class="c"># 若在網頁上改過檔案，先把遠端的變更拉下來</span>
+git push</pre><button type="button">複製</button></div>
+</section>
+
+<!-- ================================================================ 11 -->
+<section id="longterm">
+  <h2 class="sec"><span class="n">11</span>長期維護清單</h2>
+  <div class="grid">
+    <div class="card"><h4>✔ 不要改 repo 名稱、不要刪 repo</h4><p class="why">Pages 網址包含 repo 名稱，改名後網址會變，已印出去的 QR 碼就會失效（GitHub 不會幫 Pages 做轉址）。</p></div>
+    <div class="card"><h4>✔ 金鑰至少兩份備份</h4><p class="why">換電腦時記得一起搬過去，放回 <code>android/keystore/</code> 即可繼續用同一把金鑰發佈。</p></div>
+    <div class="card"><h4>✔ 每個版本的 APK 都叫 NeonBastion.apk</h4><p class="why"><code>latest/download</code> 捷徑靠檔名對應；<code>npm run release</code> 已經固定用這個檔名。</p></div>
+    <div class="card"><h4>✔ 偶爾看一下 Actions 是否成功</h4><p class="why">GitHub 會陸續更新雲端機器（例如 2026 年 10 月 <code>ubuntu-latest</code> 將升級到 Ubuntu 26）與官方動作版本；若某天部署失敗，通常只要把 <code>pages.yml</code> 裡的版本號改新即可。</p></div>
+    <div class="card"><h4>✔ 換電腦重建環境</h4><p class="why">需要：Git、Node.js、GitHub CLI（登入一次）、JDK 17 與 Android SDK（建 APK 用），再 <code>git clone</code> 專案、<code>npm ci</code>、放回金鑰。</p></div>
+    <div class="card"><h4>✔ 區網伺服器只是備用</h4><p class="why"><code>npm run serve</code> 仍可在同一個 Wi-Fi 下快速測試尚未發佈的版本；正式分享一律用公開下載頁。</p></div>
+  </div>
+</section>
+
+<!-- ================================================================ 12 -->
+<section id="glossary">
+  <h2 class="sec"><span class="n">12</span>名詞小辭典</h2>
+  <dl class="gloss">
+    <dt>repo（儲存庫）</dt><dd>一個專案的所有檔案與版本歷史。</dd>
+    <dt>commit（提交）</dt><dd>一次變更的快照，附有說明文字與作者。</dd>
+    <dt>push（推送）</dt><dd>把本機的 commit 上傳到 GitHub。</dd>
+    <dt>branch main（主分支）</dt><dd>正式版本所在的分支；推送到 main 會觸發自動部署。</dd>
+    <dt>workflow（工作流程）</dt><dd>寫給 GitHub Actions 的自動化步驟清單（YAML 檔）。</dd>
+    <dt>Release（發佈版本）</dt><dd>附帶成品檔案（APK）與說明的正式版本，以 git 標籤（如 <code>v2.1.0</code>）標記。</dd>
+    <dt>CDN</dt><dd>分散在全球的快取伺服器，讓各地玩家都能快速載入網站。</dd>
+    <dt>HTTPS</dt><dd>加密連線，避免下載內容在傳輸途中被竄改。</dd>
+    <dt>APK</dt><dd>Android 的安裝檔。</dd>
+    <dt>簽署（signing）</dt><dd>用私密金鑰在 APK 上蓋章，證明它來自同一位開發者；Android 只接受同一把金鑰簽署的更新。</dd>
+    <dt>versionCode</dt><dd>Android 判斷新舊版本的整數；這個專案由版本號自動換算。</dd>
+    <dt>側載（sideload）</dt><dd>不透過 Google Play、直接安裝 APK。</dd>
+    <dt>token / scope</dt><dd>GitHub 發給工具的通行證與它的權限範圍，可隨時撤銷。</dd>
+    <dt>fork</dt><dd>把別人的公開 repo 複製一份到自己帳號下修改。</dd>
+    <dt>MIT 授權</dt><dd>最寬鬆的開源授權之一：可自由使用、修改、商用，只需保留著作權聲明。</dd>
+  </dl>
+</section>
+
+<footer>霓虹防線 NEON BASTION · 部署說明（2026 年 9 月）· 原始碼以 MIT 授權開源</footer>
+</main>
+</div>
+
+<script>
+// copy buttons
+document.querySelectorAll('.code').forEach((box) => {
+  const btn = box.querySelector('button');
+  const pre = box.querySelector('pre');
+  if (!btn || !pre) return;
+  btn.addEventListener('click', async () => {
+    const text = pre.innerText.replace(/\s+#.*$/gm, '').trim();
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text; document.body.appendChild(ta); ta.select();
+      try { ok = document.execCommand('copy'); } catch (e2) { ok = false; }
+      ta.remove();
+    }
+    btn.textContent = ok ? '已複製' : '請手動選取';
+    setTimeout(() => { btn.textContent = '複製'; }, 1400);
+  });
+});
+// highlight the current section in the table of contents
+const links = [...document.querySelectorAll('nav.toc a')];
+const secs = links.map((a) => document.querySelector(a.getAttribute('href')));
+const onScroll = () => {
+  let cur = 0;
+  secs.forEach((s, i) => { if (s && s.getBoundingClientRect().top < 140) cur = i; });
+  links.forEach((a, i) => a.classList.toggle('on', i === cur));
+};
+addEventListener('scroll', onScroll, { passive: true });
+onScroll();
+</script>
+</body>
+</html>
