@@ -1,6 +1,6 @@
 # 霓虹防線 NEON BASTION
 
-3D 科幻霓虹風格塔防遊戲。Android App（WebView 包裝）＋ 瀏覽器皆可玩，完全離線、不需任何網路資源。
+3D 科幻霓虹風格塔防遊戲。Android App（WebView 包裝）+ 瀏覽器皆可玩，完全離線、不需任何網路資源。
 
 ## 下載與遊玩
 
