@@ -3,6 +3,8 @@
 import { h, svg } from './dom.js';
 import { createRoom, joinRoom } from '../net/room.js';
 import { RemoteSide } from '../net/remoteSide.js';
+import { mapIdFromStart } from '../core/versusMaps.js';
+import { getVersusMap } from '../core/versus.js';
 
 const START_DELAY = 3000; // ms countdown after the handshake so both sides start together
 const GAME_URL = 'https://job159.github.io/Tower-Defense-Game_Android/';
@@ -41,8 +43,8 @@ export const versusOnline = {
     const unhook = () => { if (lobby.room) for (const [ev, fn] of lobby.offs) lobby.room.off(ev, fn); lobby.offs.length = 0; };
     lobby.leave = () => { unhook(); clearTimeout(lobby.timer); lobby.closed = true; if (lobby.room && !lobby.inMatch) lobby.room.close('left'); };
 
-    // both sides count down to the same moment, then the match starts
-    const launch = (seed, peer, delay) => {
+    // both sides count down to the same moment, then the match starts (on the map the host dealt)
+    const launch = (seed, map, peer, delay) => {
       unhook();
       const me = myInfo();
       this.rememberVersusLoadout(me.loadout);
@@ -51,9 +53,9 @@ export const versusOnline = {
       const tick = () => {
         if (lobby.closed) return;
         const ms = at - performance.now();
-        if (ms > 0) { setStatus(`對手：${peer.name}　${Math.ceil(ms / 1000)}…`, 'go'); lobby.timer = setTimeout(tick, Math.min(250, ms)); return; }
+        if (ms > 0) { setStatus(`對手：${peer.name}　地圖：${getVersusMap(map).name}　${Math.ceil(ms / 1000)}…`, 'go'); lobby.timer = setTimeout(tick, Math.min(250, ms)); return; }
         lobby.inMatch = true;
-        app.startVersus({ mode: 'online', seed, loadout: me.loadout, oppName: peer.name,
+        app.startVersus({ mode: 'online', seed, map, loadout: me.loadout, oppName: peer.name,
           online: { room: lobby.room, remote: new RemoteSide(lobby.room, { name: peer.name, loadout: peer.loadout }) } });
       };
       tick();
@@ -76,9 +78,10 @@ export const versusOnline = {
       on('message', ({ type, data }) => {
         if (type !== 'hello') return;
         const seed = Math.floor(Math.random() * 1e9);
+        const map = app.nextVersusMap(); // the host deals the map; the guest plays the same one
         const me = myInfo();
-        lobby.room.send('start', { seed, name: me.name, loadout: me.loadout, delay: START_DELAY });
-        launch(seed, { name: data.name || '對手', loadout: data.loadout || [] }, START_DELAY);
+        lobby.room.send('start', { seed, map, name: me.name, loadout: me.loadout, delay: START_DELAY });
+        launch(seed, map, { name: data.name || '對手', loadout: data.loadout || [] }, START_DELAY);
       });
       on('peer-left', () => setStatus('對手離開了，房間重新開放，等待新的對手…', 'wait'));
     };
@@ -101,7 +104,7 @@ export const versusOnline = {
       on('message', ({ type, data }) => {
         if (type !== 'start') return;
         const delay = Math.max(500, (data.delay || START_DELAY) - (lobby.room.rtt || 0) / 2);
-        launch(data.seed, { name: data.name || '對手', loadout: data.loadout || [] }, delay);
+        launch(data.seed, mapIdFromStart(data), { name: data.name || '對手', loadout: data.loadout || [] }, delay);
       });
       on('closed', () => { if (!lobby.inMatch) { lobby.closed = true; busy(false); setStatus('房主關閉了房間', 'err'); } });
       lobby.room.send('hello', myInfo());

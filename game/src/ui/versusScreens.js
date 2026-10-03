@@ -1,14 +1,16 @@
 // Versus menus: mode select, practice (vs AI) setup, loadout picker, in-match menu and results.
 // Mixed into Screens (see screens.js), so `this` is the Screens instance.
 import { h, svg } from './dom.js';
-import { TOWERS, TOWER_ORDER, LOADOUT_SIZE } from '../core/config.js';
-import { VS_RULES, PACKS, DEFAULT_VS_LOADOUT } from '../core/versus.js';
-import { roleChip, dmgChip } from './hud.js';
+import { TOWER_ORDER, LOADOUT_SIZE } from '../core/config.js';
+import { VS_RULES, PACKS, DEFAULT_VS_LOADOUT, VS_MAPS, getVersusMap } from '../core/versus.js';
+import { mapIdFromStart } from '../core/versusMaps.js';
 import { RemoteSide } from '../net/remoteSide.js';
 
 const AI_LEVELS = [['easy', '簡單'], ['normal', '普通'], ['hard', '困難']];
 const AI_NAMES = { easy: '電腦（簡單）', normal: '電腦（普通）', hard: '電腦（困難）' };
 const mmss = (t) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`;
+// "地圖 漩渦之眼 VORTEX EYE": the match's map, shown in the in-match menu and on the result
+const mapLine = (map) => (map ? h('p', { class: 'vs-mapline' }, '地圖　', h('b', {}, map.name), `　${map.en}`) : null);
 
 export const versusScreens = {
   // ---------------------------------------------------------------- mode select
@@ -20,10 +22,12 @@ export const versusScreens = {
       h('h3', {}, '對戰規則'),
       h('ul', {},
         h('li', {}, '雙方守護同一張地圖的左右兩半，只能在', h('b', {}, '自己的半場'), '建造砲塔。'),
+        h('li', {}, '地圖：', h('b', {}, `每場隨機（共 ${VS_MAPS.length} 張）`), '，左右兩邊的路線完全對稱。'),
         h('li', {}, `每 ${VS_RULES.waveEvery} 秒雙方同時迎來一模一樣的系統波次。`),
-        h('li', {}, '用下方的', h('b', {}, '派兵列'), '把怪物送進對手的路線：花錢派兵，同時', h('b', {}, '永久提高收入'), `（每 ${VS_RULES.incomeEvery} 秒入帳）。`),
+        h('li', {}, '用下方的', h('b', {}, '派兵列'), '把怪物送進對手的路線：花錢派兵，同時', h('b', {}, '永久提高收入'), `（每 ${VS_RULES.incomeEvery} 秒入帳，上限 +${VS_RULES.maxEco}）。`),
+        h('li', {}, '派出的都是', h('b', {}, '精英怪'), `：生命 ×${VS_RULES.sent.hp}、護甲 +${VS_RULES.sent.armor}、速度 +${Math.round((VS_RULES.sent.speed - 1) * 100)}%；但被擊殺時對手拿全額賞金，亂派等於送錢。`),
         h('li', {}, '便宜兵種收入回報最好；空軍、護盾、隱形專打對手的弱點；重裝與首領壓力最大。'),
-        h('li', {}, `核心耐久 ${VS_RULES.lives}，先歸零的一方落敗。第 ${VS_RULES.suddenDeathWave} 波後進入驟死期，系統波次急速增強。`)));
+        h('li', {}, `核心耐久 ${VS_RULES.lives}，先歸零的一方落敗。第 ${VS_RULES.suddenDeathWave} 波後進入驟死期，系統波次每波再強 ${Math.round(VS_RULES.suddenDeathHp * 100)}%。`)));
     const card = (cls, icon, title, sub, onClick, extra) => h('button', { class: `vs-card panel ${cls}`, onclick: () => { this.click(); onClick(); } },
       h('span', { class: 'ic' }, svg(icon)), h('span', { class: 't' }, title), h('span', { class: 's' }, sub), extra || null);
     const el = h('div', { class: 'layer screen vs-menu fade-in' },
@@ -48,17 +52,14 @@ export const versusScreens = {
       count.textContent = `編成 ${loadout.length}/${LOADOUT_SIZE}`;
       for (const t of TOWER_ORDER) {
         const on = loadout.includes(t);
-        const def = TOWERS[t];
-        grid.append(h('button', { class: `lcard${on ? ' on' : ''}`, onclick: () => {
-          this.click();
+        // tap toggles; ⓘ / long-press opens the full briefing (see Screens.towerCard)
+        grid.append(this.towerCard(t, { on, versus: true, full: loadout.length >= LOADOUT_SIZE, onToggle: () => {
           if (on) loadout = loadout.filter((x) => x !== t);
           else if (loadout.length >= LOADOUT_SIZE) { this.app.toast(`最多編入 ${LOADOUT_SIZE} 種砲塔`); return; }
           else loadout = TOWER_ORDER.filter((x) => x === t || loadout.includes(x));
           render();
           onChange(loadout);
-        } },
-        h('img', { src: this.app.thumbs.tower[t] }), h('span', { class: 'ln' }, def.name), roleChip(t),
-        h('span', { class: 'lrow' }, h('span', { class: 'lc num' }, `${def.cost}`), dmgChip(def.type))));
+        } }));
       }
     };
     render();
@@ -104,7 +105,7 @@ export const versusScreens = {
       h('div', { class: 'vs-setup' },
         h('div', { class: 'sect' }, '砲塔編成（選 6 種帶上場；對手看得到你的編成）'),
         picker.el,
-        h('div', { class: 'tipline' }, '提示：至少帶一種對空砲塔與感測陣列，對手的空軍與隱形兵種才擋得住。')));
+        h('div', { class: 'tipline' }, '點 ⓘ（或長按）看砲塔詳細說明。提示：至少帶一種對空砲塔與感測陣列，對手的空軍與隱形兵種才擋得住。')));
     this.show('versusPractice', el);
   },
 
@@ -116,6 +117,7 @@ export const versusScreens = {
     const m = this.modal([
       h('h2', {}, online ? '選單' : '暫停'),
       h('p', {}, online ? '線上對戰不會暫停，對手仍在進行中。' : `練習對戰 · ${session.opts.oppName}`),
+      mapLine(session.map),
       h('div', { class: 'row', style: { flexDirection: 'column', alignItems: 'stretch' } },
         h('button', { class: 'btn primary', onclick: () => { this.click(); resume(); } }, svg('play'), '繼續'),
         h('button', { class: 'btn', onclick: () => { this.click(); this.settings(); } }, svg('gear'), '設定'),
@@ -130,29 +132,30 @@ export const versusScreens = {
     const offs = [];
     const on = (ev, fn) => { room.on(ev, fn); offs.push([ev, fn]); };
     const cleanup = () => { for (const [ev, fn] of offs) room.off(ev, fn); offs.length = 0; };
-    const start = (seed, delay) => {
+    const start = (seed, map, delay) => {
       if (done) return;
       done = true;
       cleanup();
-      note.textContent = '即將開始…';
+      note.textContent = `即將開始…　下一張地圖：${getVersusMap(map).name}`;
       setTimeout(() => {
         if (app.session !== session) return;
         session.keepRoom = true;
         closeModal();
         const o = session.opts;
-        app.startVersus({ mode: 'online', seed, loadout: o.loadout, oppName: o.oppName,
+        app.startVersus({ mode: 'online', seed, map, loadout: o.loadout, oppName: o.oppName,
           online: { room, remote: new RemoteSide(room, { name: o.oppName }) } });
       }, delay);
     };
     const maybeStart = () => {
       if (!mine || !theirs || !room.isHost) return;
       const seed = Math.floor(Math.random() * 1e9);
-      room.send('start', { seed, delay: 1500, rematch: true });
-      start(seed, 1500);
+      const map = app.nextVersusMap(); // a fresh map (the one just played is in the recent list)
+      room.send('start', { seed, map, delay: 1500, rematch: true });
+      start(seed, map, 1500);
     };
     on('message', ({ type, data }) => {
       if (type === 'rematch') { theirs = true; note.textContent = mine ? '雙方都同意，準備開始…' : '對手想再來一場！'; maybeStart(); }
-      if (type === 'start' && data.rematch && !room.isHost) start(data.seed, Math.max(300, (data.delay || 1500) - (room.rtt || 0) / 2));
+      if (type === 'start' && data.rematch && !room.isHost) start(data.seed, mapIdFromStart(data), Math.max(300, (data.delay || 1500) - (room.rtt || 0) / 2));
     });
     on('closed', () => { cleanup(); btn.disabled = true; note.textContent = '對手已離開房間'; });
     if (room.status === 'closed' || session.opp.forfeit) { cleanup(); btn.disabled = true; note.textContent = '對手已離開房間'; return; }
@@ -180,8 +183,9 @@ export const versusScreens = {
       h('div', {}, h('span', {}, '派兵'), h('span', {}, `${res.sent} 次 · ${res.sentValue}`)),
       h('div', {}, h('span', {}, '最高收入'), h('span', {}, `+${res.ecoMax}/${VS_RULES.incomeEvery}s`)));
     const note = h('p', { class: 'vs-status wait', style: { textAlign: 'center' } });
+    // practice rematch: new seed and a new random map
     const again = res.mode === 'ai'
-      ? h('button', { class: 'btn primary', onclick: () => { this.click(); this.closeModal(m); app.startVersus({ ...app.lastVersus, seed: undefined }); } }, svg('restart'), '再來一場')
+      ? h('button', { class: 'btn primary', onclick: () => { this.click(); this.closeModal(m); app.startVersus({ ...app.lastVersus, seed: undefined, map: undefined }); } }, svg('restart'), '再來一場')
       : h('button', { class: 'btn primary' }, svg('restart'), '再來一場');
     if (res.mode === 'online') this.versusRematch(session, again, note, () => this.closeModal(m));
     const title = res.win ? '勝利！' : res.surrendered ? '已投降' : '落敗';
@@ -189,7 +193,7 @@ export const versusScreens = {
       ? (res.mode === 'ai' ? `擊敗了${session.opts.oppName}` : res.forfeit ? '對手已斷線，判定勝利' : res.oppSurrendered ? '對手投降了' : '對手的核心已被攻破')
       : (res.surrendered ? '下次再接再厲' : '多派兵提高收入、補上對手會針對的弱點，再試一次！');
     const m = this.modal([
-      h('h2', {}, title), h('p', {}, sub), statsGrid, res.mode === 'online' ? note : null,
+      h('h2', {}, title), h('p', {}, sub), mapLine(session.map), statsGrid, res.mode === 'online' ? note : null,
       h('div', { class: 'row' },
         h('button', { class: 'btn ghost', onclick: () => { this.click(); toMenu(); } }, svg('home'), '返回'),
         again),

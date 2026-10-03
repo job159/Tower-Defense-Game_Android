@@ -335,8 +335,7 @@ export class Game {
     while (this.qi < this.queue.length && this.queue[this.qi].t <= this.time) {
       const s = this.queue[this.qi++];
       const e = this.spawnEnemy(s.type, s.path, s.wave, 0, s.hp);
-      // versus: units sent by the opponent pay the defender a reduced bounty
-      if (s.sent) { e.sent = true; e.reward *= s.rewardMul ?? 1; }
+      if (s.sent) this.makeSent(e, s.sent);
     }
 
     this.updateDetection();
@@ -406,6 +405,16 @@ export class Game {
     const first = !this.seen.has(type);
     this.seen.add(type);
     this.emit('spawn', { enemy: e, first });
+    return e;
+  }
+
+  // versus: a unit sent by the opponent is elite — extra armor and speed (hp is applied at spawn) — and pays
+  // b.reward × the usual bounty; what it summons or splits into gets the same treatment
+  makeSent(e, b) {
+    e.sent = b;
+    e.armor += b.armor;
+    e.speed *= b.speed;
+    e.reward *= b.reward;
     return e;
   }
 
@@ -564,7 +573,8 @@ export class Game {
     const p = paths[e.pathIndex % paths.length];
     const base = !!def.air === e.air ? e.dist : p.nearestDist(e.x, e.z);
     for (let i = 0; i < s.count; i++) {
-      const m = this.spawnEnemy(s.type, e.pathIndex, e.wave, Math.max(0, base - 0.5 - i * 0.45), 0.8);
+      const m = this.spawnEnemy(s.type, e.pathIndex, e.wave, Math.max(0, base - 0.5 - i * 0.45), 0.8 * (e.sent ? e.sent.hp : 1));
+      if (e.sent) this.makeSent(m, e.sent);
       m.offset = (i % 2 ? 1 : -1) * 0.22;
       this.placeEnemy(m);
     }
@@ -585,8 +595,8 @@ export class Game {
     e.path = p;
     e.y = e.air ? AIR_HEIGHT + 0.35 : 0;
     e.h = e.y || def.radius * 1.1;
-    e.armor = def.armor + this.diff.armor;
-    e.speed = def.speed * this.diff.speed;
+    e.armor = def.armor + this.diff.armor + (e.sent ? e.sent.armor : 0);
+    e.speed = def.speed * this.diff.speed * (e.sent ? e.sent.speed : 1);
     e.summonCd = 3;
     e.empCd = 4;
     e.stunTime = 0;
@@ -660,7 +670,8 @@ export class Game {
     const split = e.def.split;
     if (split) {
       for (let i = 0; i < split.count; i++) {
-        const m = this.spawnEnemy(split.type, e.pathIndex, e.wave, Math.max(0, e.dist + (i - 1) * 0.25));
+        const m = this.spawnEnemy(split.type, e.pathIndex, e.wave, Math.max(0, e.dist + (i - 1) * 0.25), e.sent ? e.sent.hp : 1);
+        if (e.sent) this.makeSent(m, e.sent);
         m.offset = (i - 1) * 0.2;
         this.placeEnemy(m);
       }

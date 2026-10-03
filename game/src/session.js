@@ -28,6 +28,7 @@ export class Session {
     this.preview = null;
     this.over = false;
     this.intensity = 0;
+    if (app.audio.beginMatch) app.audio.beginMatch(); // the chosen soundtrack (random: a new pick) plays this match
     this.tut = level.id === 1 && !opts.endless && !app.save.data.tutorial ? 0 : -1;
     this.resize();
     if (opts.snapshot) this.hud.toast(`從第 ${this.game.wave + 1} 波繼續`);

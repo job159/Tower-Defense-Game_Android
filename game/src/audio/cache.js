@@ -68,6 +68,30 @@ export class AudioCache {
     return this.writes;
   }
 
+  // Deletes this version's entries whose key fails keep(key) (e.g. renders of an older revision of
+  // the selectable soundtrack). Best effort, in the background.
+  async prune(keep) {
+    if (!this.db) return 0;
+    const pre = `${this.version}|`;
+    let n = 0;
+    try {
+      const tx = this.db.transaction(STORE, 'readwrite');
+      const store = tx.objectStore(STORE);
+      await new Promise((res) => {
+        const r = store.openKeyCursor ? store.openKeyCursor() : store.openCursor();
+        r.onsuccess = () => {
+          const cur = r.result;
+          if (!cur) { res(); return; }
+          const k = String(cur.key);
+          if (k.startsWith(pre) && !keep(k.slice(pre.length))) { store.delete(cur.key); n++; }
+          cur.continue();
+        };
+        r.onerror = () => res();
+      });
+    } catch (e) { /* ignore */ }
+    return n;
+  }
+
   async clear() {
     if (!this.db) return;
     try {

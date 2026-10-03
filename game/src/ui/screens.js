@@ -2,18 +2,24 @@
 import { h, svg, add } from './dom.js';
 import { LEVELS } from '../core/levels.js';
 import {
-  RESEARCH, RESEARCH_GROUPS, TOWERS, TOWER_ORDER, ENEMIES, ARMOR_CLASSES, DAMAGE_TYPES, DAMAGE_ORDER, UNLOCK_AT, LOADOUT_SIZE, ABILITIES, towerBaseStats,
+  RESEARCH, RESEARCH_GROUPS, TOWERS, TOWER_ORDER, ENEMIES, ARMOR_CLASSES, DAMAGE_TYPES, DAMAGE_ORDER, UNLOCK_AT, LOADOUT_SIZE, ABILITIES, SHIELD_MUL, towerBaseStats,
 } from '../core/config.js';
 import { TILE, buildMap } from '../core/path.js';
 import { DIFFICULTY, DIFFICULTY_ORDER, MUTATORS, levelMutators, levelThreats } from '../core/waves.js';
 import { unlockedTowers, defaultLoadout } from '../core/sim.js';
-import { setVibration } from '../audio/audio.js';
+import { setVibration, BGM_LIST } from '../audio/audio.js';
 import { statRows, towerTags, dmgChip, roleChip } from './hud.js';
+import { VS_MAPS, VS_RULES } from '../core/versus.js';
 import { versusScreens } from './versusScreens.js';
 import { versusOnline } from './versusOnline.js';
 
 const stars = (n, max = 3) => h('span', { class: 'stars' }, ...Array.from({ length: max }, (_, i) => h('span', { class: `star${i < n ? ' on' : ''}` }, '★')));
 const DIFF_CLASS = { normal: '', hard: 'hard', nightmare: 'nightmare' };
+const bgmLabel = (id) => {
+  if (id === 'random') return '隨機（每場一首）';
+  const t = BGM_LIST.find((x) => x.id === id);
+  return t ? `${t.name} · ${t.tag}` : '自動（原聲動態配樂）';
+};
 
 export class Screens {
   constructor(app) {
@@ -117,28 +123,32 @@ export class Screens {
     el.addEventListener('pointerdown', () => app.audio.unlock(), { once: true });
     this.show('title', el);
     app.audio.setMusic('menu');
-    if ((save.data.news || 0) < 3) {
+    if ((save.data.news || 0) < 4) {
       // one-time "what's new" for returning players (fresh installs just skip it)
       const prev = save.data.news || 0;
-      const returning = save.totalStars() > 0;
-      save.data.news = 3;
+      const returning = prev > 0 || save.totalStars() > 0;
+      save.data.news = 4;
       save.write();
-      if (returning) { if (prev < 2) this.whatsNew(); else this.versusNews(); }
+      if (returning) { if (prev < 2) this.whatsNew(); else this.updateNews(prev); }
     }
   }
 
-  versusNews() {
+  // v2.3 news (plus the versus mode itself for players who skipped the v2.2 note)
+  updateNews(prev) {
+    const s = VS_RULES.sent;
     const items = [
-      ['雙人對戰', '同一張地圖分左右兩半，各守一邊，用派兵列把怪物送進對手的路線'],
-      ['線上對戰', '輸入相同的 5 位數房間號碼即可連線，任何網路都能玩'],
-      ['練習對戰', '和電腦（簡單／普通／困難）對戰，熟悉派兵與收入的節奏'],
-    ];
+      prev < 3 ? ['雙人對戰', '輸入房間號碼線上對戰，或和電腦練習；用派兵列把怪物送進對手的路線'] : null,
+      [`${VS_MAPS.length} 張對戰地圖`, '每場隨機一張：螺旋、裂隙、量子隧道、斷崖天橋……左右兩邊完全對稱'],
+      ['精英派兵', `派出的怪物生命 ×${s.hp}、護甲 +${s.armor}、速度 +${Math.round((s.speed - 1) * 100)}%；收入上限提高到 +${VS_RULES.maxEco}`],
+      ['背景音樂', `設定 → 背景音樂：${BGM_LIST.length} 首精選配樂任選試聽，或每場隨機`],
+      ['砲塔詳細說明', '編成時點砲塔卡左上角的 ⓘ，數值成長、剋制與專精一次看懂'],
+    ].filter(Boolean);
     const m = this.modal([
-      h('h2', {}, '新模式：雙人對戰'),
+      h('h2', {}, '霓虹防線 2.3'),
       h('div', { class: 'news' }, items.map(([t, d]) => h('div', { class: 'news-item' }, h('b', {}, t), h('span', {}, d)))),
       h('div', { class: 'row' },
         h('button', { class: 'btn ghost small', onclick: () => { this.click(); this.closeModal(m); } }, '稍後'),
-        h('button', { class: 'btn primary small', onclick: () => { this.click(); this.closeModal(m); this.versusMenu(); } }, '去看看')),
+        h('button', { class: 'btn primary small', onclick: () => { this.click(); this.closeModal(m); this.versusMenu(); } }, '去雙人對戰')),
     ], { cls: 'wide' });
   }
 
@@ -295,21 +305,17 @@ export class Screens {
       for (const t of TOWER_ORDER) {
         const unl = pool.includes(t);
         const on = loadout.includes(t);
-        const def = TOWERS[t];
-        grid.append(h('button', { class: `lcard${on ? ' on' : ''}${unl ? '' : ' locked'}`, onclick: () => {
-          this.click();
+        grid.append(this.towerCard(t, { on, locked: !unl, lockText: `關卡 ${UNLOCK_AT[t]}`, full: loadout.length >= LOADOUT_SIZE, onToggle: () => {
           if (!unl) return app.toast(`關卡 ${UNLOCK_AT[t]} 解鎖`);
           if (on) loadout = loadout.filter((x) => x !== t);
           else if (loadout.length >= LOADOUT_SIZE) return app.toast(`最多編入 ${LOADOUT_SIZE} 種砲塔`);
           else loadout = TOWER_ORDER.filter((x) => x === t || loadout.includes(x));
           renderRight();
-        }, oncontextmenu: (ev) => { ev.preventDefault(); this.towerDetail(t); } },
-        h('img', { src: app.thumbs.tower[t] }), h('span', { class: 'ln' }, def.name), roleChip(t), h('span', { class: 'lrow' }, h('span', { class: 'lc num' }, `${def.cost}`), dmgChip(def.type)),
-        unl ? null : h('span', { class: 'lk' }, `關卡 ${UNLOCK_AT[t]}`)));
+        } }));
       }
       go.disabled = loadout.length === 0;
       right.append(h('div', { class: 'sect' }, '砲塔編成（每關最多 6 種）'), grid,
-        h('div', { class: 'tipline' }, '隱形敵人需要感測陣列偵測；飛行敵人只有對空砲塔能攻擊。長按砲塔可查看圖鑑。'));
+        h('div', { class: 'tipline' }, '點 ⓘ（或長按）看砲塔詳細說明。隱形敵人需要感測陣列偵測；飛行敵人只有對空砲塔能攻擊。'));
     };
     renderLeft();
     renderRight();
@@ -331,19 +337,8 @@ export class Screens {
     const tabs = h('div', { class: 'tabs' });
     let sel = null;
     const showTower = (t) => {
-      const def = TOWERS[t];
-      const s = towerBaseStats(t, 1, null);
       detail.textContent = '';
-      detail.append(h('div', { class: 'dh' }, h('img', { src: app.thumbs.tower[t] }), h('div', {}, h('h3', {}, def.name), h('div', { class: 'en' }, def.en), h('div', { style: { display: 'flex', gap: '4px' } }, roleChip(t), dmgChip(def.type)))),
-        h('p', { style: { color: `#${def.color.toString(16).padStart(6, '0')}` } }, `定位：${def.roleDesc}`), h('p', {}, def.desc), h('table', {}, statRows(t, s).map(([k, v]) => h('tr', {}, h('td', {}, k), h('td', { class: 'num' }, v)))),
-        h('div', { class: 'tags', style: { display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' } }, towerTags(t, s).map((x) => h('span', { class: 'chip' }, x))));
-      for (const k of ['a', 'b']) {
-        const sp = def.specs[k];
-        detail.append(h('div', { class: 'spec' },
-          h('div', {}, h('b', {}, `專精 ${k.toUpperCase()}：${sp.name}`), ` ${sp.en}`), h('div', {}, sp.desc),
-          h('div', {}, h('span', { class: 'u' }, `終極：${sp.ult.name}`), ` — ${sp.ult.desc}`)));
-      }
-      detail.append(h('p', { style: { fontSize: '11px' } }, `關卡 ${UNLOCK_AT[t]} 解鎖 · 終極型態需研究「終極協議」`));
+      this.fillTower(detail, t);
     };
     const showEnemy = (t, known) => {
       detail.textContent = '';
@@ -416,7 +411,72 @@ export class Screens {
   }
 
   towerDetail(t) {
-    this.codex('tower');
+    this.towerInfo(t);
+  }
+
+  // ---------------------------------------------------------------- tower briefing (codex + loadout cards)
+  // Role, stats from level 1 to 3, what it counters, specialisations and ultimates. `side` (optional) takes the
+  // specialisation blocks so the loadout briefing can lay them out in a second column.
+  fillTower(el, t, { versus = false, side = el } = {}) {
+    const def = TOWERS[t];
+    const s1 = towerBaseStats(t, 1, null);
+    const lv3 = new Map(statRows(t, towerBaseStats(t, 3, null)));
+    const rows = statRows(t, s1).map(([k, v]) => [k, lv3.has(k) && lv3.get(k) !== v ? `${v} → ${lv3.get(k)}` : v]);
+    rows.push(['建造 · 升級', `${def.cost} · ${def.levels[1].cost} · ${def.levels[2].cost}`]);
+    const tags = towerTags(t, s1);
+    // damage-type matchups against each armor class (and energy shields)
+    const match = [];
+    if (def.attack !== 'support' && def.attack !== 'sensor') {
+      for (const [k, c] of Object.entries(ARMOR_CLASSES)) {
+        const m = c.mul[def.type];
+        if ((k !== 'aerial' || def.air) && (m >= 1.15 || m <= 0.85)) match.push(h('span', { class: `dchip ${m > 1 ? 'good' : 'bad'}` }, `${c.name} ×${m}`));
+      }
+      const sm = SHIELD_MUL[def.type];
+      if (sm < 1 || (sm > 1 && !tags.some((x) => x.startsWith('護盾')))) match.push(h('span', { class: `dchip ${sm > 1 ? 'good' : 'bad'}` }, `護盾 ×${sm}`));
+    }
+    add(el,
+      h('div', { class: 'dh' }, h('img', { src: this.app.thumbs.tower[t] }),
+        h('div', {}, h('h3', {}, def.name), h('div', { class: 'en' }, def.en),
+          h('div', { style: { display: 'flex', gap: '4px', marginTop: '3px' } }, roleChip(t), dmgChip(def.type), h('span', { class: 'dchip num' }, `建造 ${def.cost}`)))),
+      h('p', { style: { color: `#${def.color.toString(16).padStart(6, '0')}` } }, `定位：${def.roleDesc}`),
+      h('p', {}, def.desc),
+      h('div', { class: 'chips' }, tags.map((x) => h('span', { class: 'chip' }, x))),
+      match.length ? h('div', { class: 'chips' }, h('span', { class: 'lbl' }, '對裝甲'), match) : null,
+      h('table', {}, rows.map(([k, v]) => h('tr', {}, h('td', {}, k), h('td', { class: 'num' }, v)))));
+    for (const k of ['a', 'b']) {
+      const sp = def.specs[k];
+      side.append(h('div', { class: 'spec' },
+        h('div', {}, h('b', {}, `專精 ${k.toUpperCase()}：${sp.name}`), ` ${sp.en} · ${sp.cost}`), h('div', {}, sp.desc),
+        h('div', {}, h('span', { class: 'u' }, `終極：${sp.ult.name}`), ` (${sp.ult.cost}) — ${sp.ult.desc}`)));
+    }
+    side.append(h('p', { style: { fontSize: '11px' } }, versus ? '升到 3 級後選擇一種專精；對戰中終極型態全部開放。' : `關卡 ${UNLOCK_AT[t]} 解鎖 · 3 級後選擇專精 · 終極型態需研究「終極協議」`));
+  }
+
+  // Briefing modal opened from a loadout card (ⓘ / long-press); can add or remove the tower right there.
+  towerInfo(t, { on = false, locked = false, lockText = '', full = false, versus = false, onToggle = null } = {}) {
+    const left = h('div', { class: 'detail' }), right = h('div', { class: 'detail' });
+    this.fillTower(left, t, { versus, side: right });
+    const close = () => { this.click(); this.closeModal(m); };
+    let act = null;
+    if (onToggle) {
+      if (locked) act = h('button', { class: 'btn', disabled: true }, `${lockText} 解鎖`);
+      else if (on) act = h('button', { class: 'btn', onclick: () => { close(); onToggle(); } }, '移出編成');
+      else if (full) act = h('button', { class: 'btn', disabled: true }, `編成已滿（${LOADOUT_SIZE} 種）`);
+      else act = h('button', { class: 'btn primary', onclick: () => { close(); onToggle(); } }, svg('deploy'), '編入編成');
+    }
+    const m = this.modal([h('div', { class: 'codex tinfo' }, left, right),
+      h('div', { class: 'row' }, h('button', { class: 'btn ghost', onclick: close }, '關閉'), act)], { cls: 'tinfo-modal' });
+  }
+
+  // Loadout card: tap toggles it in the loadout; ⓘ (or long-press) opens the briefing.
+  towerCard(t, { on = false, locked = false, lockText = '', full = false, versus = false, onToggle }) {
+    const def = TOWERS[t];
+    const info = () => this.towerInfo(t, { on, locked, lockText, full, versus, onToggle });
+    return h('button', { class: `lcard${on ? ' on' : ''}${locked ? ' locked' : ''}`, onclick: () => { this.click(); onToggle(); }, oncontextmenu: (ev) => { ev.preventDefault(); info(); } },
+      h('span', { class: 'ibtn', 'aria-label': '詳細說明', onclick: (ev) => { ev.stopPropagation(); this.click(); info(); } }, 'i'),
+      h('img', { src: this.app.thumbs.tower[t] }), h('span', { class: 'ln' }, def.name), roleChip(t),
+      h('span', { class: 'lrow' }, h('span', { class: 'lc num' }, `${def.cost}`), dmgChip(def.type)),
+      locked ? h('span', { class: 'lk' }, lockText) : null);
   }
 
   // ---------------------------------------------------------------- research
@@ -479,19 +539,97 @@ export class Screens {
       s.addEventListener('change', () => app.save.write());
       return s;
     };
+    const bgmCur = h('span', { class: 'bgm-cur' }, bgmLabel(st.bgm));
+    const close = () => { this.closeModal(m); if (onClose) onClose(); };
     const m = this.modal([
       h('h2', {}, '設定'),
-      h('div', { class: 'set-row' }, h('label', {}, '畫質'), seg([['auto', '自動'], ['low', '低'], ['medium', '中'], ['high', '高']], st.quality, (k) => { st.quality = k; app.save.write(); app.applyQuality(); })),
-      h('div', { class: 'set-row' }, h('label', {}, '音效'), slider(st.sfx, (v) => { st.sfx = v; app.audio.setVolumes(st.sfx, st.music); })),
-      h('div', { class: 'set-row' }, h('label', {}, '音樂'), slider(st.music, (v) => { st.music = v; app.audio.setVolumes(st.sfx, st.music); })),
-      h('div', { class: 'set-row' }, h('label', {}, '震動'), seg([[true, '開'], [false, '關']], st.vibrate, (k) => { st.vibrate = k; setVibration(k); app.save.write(); })),
-      h('div', { class: 'set-row' }, h('label', {}, '遊戲進度'), h('button', { class: 'btn small magenta', onclick: () => {
-        this.click();
-        this.confirm('重設所有進度？', '星星、關卡、研究都會清除，無法復原。', () => { app.save.resetAll(); app.toast('進度已重設'); if (!app.session) this.title(); }, '重設');
-      } }, '重設')),
-      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => { this.click(); this.closeModal(m); if (onClose) onClose(); } }, '完成')),
-      h('p', { style: { fontSize: '11px', color: '#6b7699', marginTop: '10px' } }, `霓虹防線 NEON BASTION v${app.version}`),
-    ], { onBack: () => { this.closeModal(m); if (onClose) onClose(); } });
+      h('div', { class: 'set-grid' },
+        h('div', { class: 'set-row' }, h('label', {}, '畫質'), seg([['auto', '自動'], ['low', '低'], ['medium', '中'], ['high', '高']], st.quality, (k) => { st.quality = k; app.save.write(); app.applyQuality(); })),
+        h('div', { class: 'set-row' }, h('label', {}, '音效'), slider(st.sfx, (v) => { st.sfx = v; app.audio.setVolumes(st.sfx, st.music); })),
+        h('div', { class: 'set-row' }, h('label', {}, '音樂'), slider(st.music, (v) => { st.music = v; app.audio.setVolumes(st.sfx, st.music); })),
+        h('div', { class: 'set-row' }, h('label', {}, '背景音樂'), h('button', { class: 'bgm-pick', onclick: () => {
+          this.click();
+          this.bgmPicker(() => { bgmCur.textContent = bgmLabel(st.bgm); });
+        } }, bgmCur, h('span', { class: 'bgm-go' }, '›'))),
+        h('div', { class: 'set-row' }, h('label', {}, '震動'), seg([[true, '開'], [false, '關']], st.vibrate, (k) => { st.vibrate = k; setVibration(k); app.save.write(); })),
+        h('div', { class: 'set-row' }, h('label', {}, '遊戲進度'), h('button', { class: 'btn small magenta', onclick: () => {
+          this.click();
+          this.confirm('重設所有進度？', '星星、關卡、研究都會清除，無法復原。', () => { app.save.resetAll(); app.toast('進度已重設'); if (!app.session) this.title(); }, '重設');
+        } }, '重設'))),
+      h('div', { class: 'row' }, h('button', { class: 'btn primary', onclick: () => { this.click(); close(); } }, '完成')),
+      h('p', { class: 'set-ver' }, `霓虹防線 NEON BASTION v${app.version}`),
+    ], { cls: 'settings', onBack: close });
+  }
+
+  // ---------------------------------------------------------------- background music picker
+  // Tapping a card selects that music (saved at once; applies to the running match too) and
+  // previews it while the picker is open; tapping the playing card again stops the preview.
+  // Closing restores whatever the game plays (menu theme or the match music).
+  bgmPicker(onDone) {
+    const app = this.app;
+    const st = app.save.settings;
+    const audio = app.audio;
+    const items = [
+      { id: 'auto', name: '自動', tag: '原聲動態配樂', desc: '遊戲原本的動態配樂，建造時沉靜、戰況越激烈編制越完整' },
+      { id: 'random', name: '隨機', tag: '每場隨機一首', desc: '每場對戰從精選曲目中隨機挑選一首' },
+      ...BGM_LIST.map((t) => ({ id: t.id, name: t.name, tag: `${t.tag} · ${t.bpm}`, desc: `${t.desc}（${t.key}・${t.bpm} BPM）` })),
+    ];
+    if (!items.some((it) => it.id === st.bgm)) st.bgm = 'auto';
+    let previewing = null;
+    const status = h('div', { class: 'bgm-status' });
+    const grid = h('div', { class: 'bgm-grid' });
+    const cards = new Map();
+    const pick = (id) => {
+      this.click();
+      if (id === st.bgm && id === previewing) { previewing = null; audio.preview(null); refresh(); return; }
+      st.bgm = id;
+      app.save.write();
+      audio.setBgmChoice(id);
+      previewing = id === 'random' ? null : id;
+      audio.preview(previewing);
+      refresh();
+    };
+    for (const it of items) {
+      const bar = h('i', { class: 'bgm-bar' });
+      const card = h('button', { class: 'bgm-card', onclick: () => pick(it.id) },
+        h('b', {}, h('span', { class: 'bgm-eq' }, h('i'), h('i'), h('i')), it.name),
+        h('span', { class: 'bgm-tag' }, it.tag), bar);
+      cards.set(it.id, { card, bar });
+      grid.append(card);
+    }
+    const refresh = () => {
+      // removed without close() (e.g. every modal dropped at once): stop the timer and the preview
+      if (m && !m.el.isConnected) { clearInterval(timer); if (previewing) audio.preview(null); return; }
+      let line = null;
+      for (const it of items) {
+        const { card, bar } = cards.get(it.id);
+        const s = it.id === 'random' ? null : audio.bgmState(it.id) || null;
+        const mine = previewing === it.id && s;
+        const busy = !!(mine && !s.ready && !s.failed);
+        card.classList.toggle('on', st.bgm === it.id);
+        card.classList.toggle('playing', !!(mine && s.playing));
+        card.classList.toggle('busy', busy);
+        bar.style.width = busy ? `${Math.round(s.progress * 100)}%` : '0%';
+        if (mine) {
+          if (s.failed) line = `「${it.name}」無法在此裝置合成，對戰中將改用原聲配樂`;
+          else if (!s.ready) line = `正在合成「${it.name}」… ${Math.round(s.progress * 100)}%（首次需要一點時間，完成後自動播放）`;
+          else line = s.playing ? `♪ 試聽中：${it.name} — ${it.desc}` : `即將播放：${it.name}`;
+        }
+      }
+      if (!line) { const sel = items.find((x) => x.id === st.bgm); line = sel ? `${sel.name} — ${sel.desc}` : ''; }
+      status.textContent = st.music < 0.02 ? `（音樂音量為 0）${line}` : line;
+    };
+    const timer = setInterval(refresh, 250);
+    const close = () => { clearInterval(timer); audio.preview(null); this.closeModal(m); if (onDone) onDone(); };
+    const m = this.modal([
+      h('h2', {}, '背景音樂'),
+      status,
+      grid,
+      h('div', { class: 'row' },
+        h('span', { class: 'bgm-note' }, '點選即試聽並套用，再點一次停止試聽'),
+        h('button', { class: 'btn primary small', onclick: () => { this.click(); close(); } }, '完成')),
+    ], { cls: 'wide bgm-modal', onBack: close });
+    refresh();
   }
 
   // ---------------------------------------------------------------- pause

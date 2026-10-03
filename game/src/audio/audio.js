@@ -10,18 +10,30 @@
 //   setMusic(mode)           'off' | 'menu' | 'build' | 'battle' | 'boss' (bar-quantized)
 //   setIntensity(x)          0..1 battle pressure -> adaptive layers
 //   stinger(name)            'victory' | 'defeat' | 'wave' | 'bossIntro'
+//   setBgmChoice(choice)     'auto' (built-in adaptive score) | 'random' | a BGM_LIST id
+//   beginMatch()             a match starts: resolves the choice (random picks per match)
+//   preview(id | null)       settings preview ('auto' = the built-in battle theme)
+//   bgmState(id)             { ready, progress, rendering, failed, playing } for the settings UI
 import { SFX, ALIASES, STINGER_ALIASES, explodeTier } from './sfx.js';
 import { TRACKS, STINGERS, renderTrack, renderStinger } from './music.js';
+import { BGM_TRACKS, BGM_LIST, BGM_REV } from './bgm.js';
 import { RenderPool, offlineSupported } from './render.js';
 import { AudioCache } from './cache.js';
 import { DspHost } from './jobs.js';
 import { Budget, makeRng, hashStr, clamp, makeIR, toInt16, fromInt16, now as perfNow } from './dsp.js';
 
+export { BGM_LIST };
+
 // Cache key for rendered PCM in IndexedDB: bump it whenever any synthesis / arrangement / mixing
-// code changes, otherwise players keep hearing the previously cached renders.
+// code changes, otherwise players keep hearing the previously cached renders. (The selectable
+// soundtrack has its own revision, BGM_REV in bgm.js, folded into its cache keys.)
 export const ENGINE_VERSION = 'nb-audio-1.0.2';
 const MODES = ['off', 'menu', 'build', 'battle', 'boss'];
 const TRACK_OF = { off: null, menu: 'menu', build: 'battle', battle: 'battle', boss: 'boss' };
+const ALL_TRACKS = { ...TRACKS, ...BGM_TRACKS };
+const BGM_KEY = `bgm@${BGM_REV}:`;
+// section energy (0 ambient .. 3 climax) -> Markov weight multipliers per situation
+const ENERGY_BIAS = { boss: [0.2, 0.55, 1, 1.7], hot: [0.45, 0.8, 1, 1.3], build: [1.2, 1.1, 1, 0.8] };
 const CATS = { weapons: 0.8, impacts: 1, enemies: 1, ui: 0.95, hero: 1, abilities: 1 };
 const MAX_VOICES = 30;
 const LOOKAHEAD = 1.2;
@@ -105,6 +117,17 @@ export class AudioEngine {
     this._prep = null;
     this._progress = [];
     this.progress = 0;
+    // selectable soundtrack: rendered lazily (only the tracks needed), one at a time
+    this.bgmChoice = 'auto';
+    this.inMatch = false;
+    this.matchBgm = null;
+    this.previewId = null;
+    this.randomNext = null;
+    this.lastRandom = null;
+    this.bgmJob = null;
+    this.bgmHost = null;
+    this.bgmProgress = {};
+    this.bgmFailed = {};
     // Offline rendering needs no user gesture: start soon after boot so sounds are ready early.
     this._autoPrep = setTimeout(() => this.prepare(), 700);
   }
@@ -217,17 +240,29 @@ export class AudioEngine {
     for (const f of this._progress) { try { f(p, label); } catch (e) { /* ignore */ } }
   }
 
+  // render pool, main-thread budget and PCM cache, shared by the base set and the soundtrack
+  _setupInfra() {
+    if (!this._infra) {
+      this._infra = (async () => {
+        const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
+        this.pool = new RenderPool(hc >= 10 ? 6 : clamp(hc - 2, 2, 4));
+        this.budget = new Budget(6);
+        this.pool.budget = this.budget;
+        this.cache = new AudioCache(ENGINE_VERSION);
+        if (!this.noCache) await this.cache.open();
+        // renders of older soundtrack revisions are dead weight
+        if (this.cache.db) this.cache.prune((k) => !k.startsWith('mus|bgm@') || k.startsWith(`mus|${BGM_KEY}`));
+      })();
+    }
+    return this._infra;
+  }
+
   async _runPrep() {
     if (!offlineSupported) { this._emit(1, 'unsupported'); return; }
     const T0 = perfNow();
-    const hc = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency) || 4;
-    this.pool = new RenderPool(hc >= 10 ? 6 : clamp(hc - 2, 2, 4));
-    this.budget = new Budget(6);
-    this.pool.budget = this.budget;
+    await this._setupInfra();
     // pure-JS DSP (normalization, sequencing, mastering, SFX finishing) runs in a Worker
     this.host = new DspHost(this.budget, !this.noWorker);
-    this.cache = new AudioCache(ENGINE_VERSION);
-    if (!this.noCache) await this.cache.open();
     const keep = !!this.cache.db; // produce Int16 PCM for the cache only when it is usable
     const queue = PLAN.slice();
     const total = queue.reduce((s, x) => s + x.w, 0);
@@ -306,18 +341,23 @@ export class AudioEngine {
     this.sfx.set(name, { def, bufs });
   }
 
-  async _prepTrack(id, pool = this.pool, keep = false) {
-    const T = TRACKS[id];
-    const man = await this.cache.get(`mus|${id}`);
+  // ctl (soundtrack renders): { cancelled, onProgress } - see renderTrack
+  async _prepTrack(id, pool = this.pool, keep = false, ctl = null, host = this.host) {
+    const T = ALL_TRACKS[id];
+    const ck = BGM_TRACKS[id] ? `${BGM_KEY}${id}` : id; // soundtrack renders carry their revision
+    const man = await this.cache.get(`mus|${ck}`);
     if (man && man.sr === T.sr && man.segs) {
       try {
         const segs = {};
+        let n = 0;
         for (const s of man.segs) {
           const stems = {};
           for (const st of T.stems) {
-            const rec = await this.cache.get(`mus|${id}|${s.id}|${st}`);
+            if (ctl && ctl.cancelled) throw new Error('cancelled');
+            const rec = await this.cache.get(`mus|${ck}|${s.id}|${st}`);
             if (!rec || !rec.sr || !rec.pcm) throw new Error('miss');
             stems[st] = i16ToBuffer(rec.pcm, rec.sr);
+            if (ctl && ctl.onProgress) ctl.onProgress(++n / (man.segs.length * T.stems.length));
             await this.budget.tick();
           }
           segs[s.id] = { bars: s.bars, stems };
@@ -325,26 +365,28 @@ export class AudioEngine {
         this._installTrack(id, segs);
         this.stats.cacheHits++;
         return;
-      } catch (e) { /* fall through: render */ }
+      } catch (e) { if (ctl && ctl.cancelled) throw e; /* else fall through: render */ }
     }
     this.stats.cacheMisses++;
-    const r = await renderTrack(T, pool, this.budget, (info) => this.stats.log.push(info), this.host, keep);
+    const r = await renderTrack(T, pool, this.budget, (info) => this.stats.log.push(info), host, keep, ctl);
     const segs = {};
     for (const s of r.segments) {
       const stems = {};
       for (const st of T.stems) { stems[st] = makeBuffer(s.stems[st], s.rates[st]); await this.budget.tick(); }
       segs[s.id] = { bars: s.bars, stems };
     }
-    this._installTrack(id, segs);
+    this._installTrack(id, segs); // even if superseded meanwhile: it is cached, the GC frees memory
     if (keep) { // serialized background writes; the manifest goes last so partial writes never count
-      for (const s of r.segments) for (const st of T.stems) this.cache.put(`mus|${id}|${s.id}|${st}`, { sr: s.rates[st], pcm: s.pcm[st] });
-      this.cache.put(`mus|${id}`, { sr: T.sr, segs: r.segments.map((s) => ({ id: s.id, bars: s.bars })) });
+      for (const s of r.segments) for (const st of T.stems) this.cache.put(`mus|${ck}|${s.id}|${st}`, { sr: s.rates[st], pcm: s.pcm[st] });
+      this.cache.put(`mus|${ck}`, { sr: T.sr, segs: r.segments.map((s) => ({ id: s.id, bars: s.bars })) });
     }
   }
 
-  _installTrack(id, segs, lufs) {
-    const T = TRACKS[id];
-    this.tracks[id] = { id, bpm: T.bpm, barDur: 240 / T.bpm, stems: T.stems, segs, next: T.next, first: T.first, lufs };
+  _installTrack(id, segs) {
+    const T = ALL_TRACKS[id];
+    let energy = null;
+    for (const s of T.sections) if (s.energy != null) (energy || (energy = {}))[s.id] = s.energy;
+    this.tracks[id] = { id, bpm: T.bpm, barDur: 240 / T.bpm, stems: T.stems, segs, next: T.next, first: T.first, entry: T.entry || null, energy, bgm: !!BGM_TRACKS[id] };
   }
 
   async _prepStinger(name, pool = this.pool, keep = false) {
@@ -541,8 +583,137 @@ export class AudioEngine {
   // ================================================================== music
   setMusic(mode) {
     if (MODES.indexOf(mode) < 0) return;
+    if (this.inMatch && (mode === 'menu' || mode === 'off')) { // the match is over
+      this.inMatch = false;
+      if (this.bgmChoice === 'random' && !this.randomNext) this.randomNext = this._pickRandom();
+      this._bgmPlan();
+    }
     this.mode = mode;
     this._tick();
+  }
+
+  // ================================================================== selectable soundtrack
+  setBgmChoice(choice) {
+    const c = choice === 'random' || BGM_TRACKS[choice] ? choice : 'auto';
+    if (c === this.bgmChoice) return;
+    this.bgmChoice = c;
+    if (c === 'random' && !this.randomNext) this.randomNext = this._pickRandom();
+    if (this.inMatch) this.matchBgm = this._resolveChoice(true); // applies to the running match
+    this._bgmPlan();
+    this._tick();
+  }
+
+  beginMatch() {
+    this.inMatch = true;
+    this.previewId = null; // a settings preview never outlives the menus
+    this.matchBgm = this._resolveChoice(false);
+    this._bgmPlan();
+  }
+
+  _resolveChoice(midMatch) {
+    const c = this.bgmChoice;
+    if (c !== 'random') return BGM_TRACKS[c] ? c : null;
+    if (midMatch && this.matchBgm && BGM_TRACKS[this.matchBgm]) return this.matchBgm; // keep playing
+    // the pick prepared in the menus; a restart without a menu visit replays the loaded one
+    const id = this.randomNext && BGM_TRACKS[this.randomNext] ? this.randomNext
+      : this.lastRandom && this.tracks[this.lastRandom] ? this.lastRandom : this._pickRandom();
+    this.lastRandom = id;
+    this.randomNext = null; // the next match gets a fresh pick (prepared once back in the menus)
+    return id;
+  }
+
+  _pickRandom() {
+    const all = BGM_LIST.map((x) => x.id);
+    const ids = all.filter((id) => id !== this.lastRandom && !this.bgmFailed[id]);
+    const from = ids.length ? ids : all;
+    return from[Math.floor(Math.random() * from.length)] || null;
+  }
+
+  // Settings preview: plays the track (full arrangement) while the picker is open; null restores
+  // whatever the game wants. 'auto' previews the built-in battle theme.
+  preview(id) {
+    const p = id === 'auto' ? 'battle' : id && (BGM_TRACKS[id] || id === 'battle') ? id : null;
+    if (p === this.previewId) return;
+    this.previewId = p;
+    this._bgmPlan();
+    this._tick();
+  }
+
+  bgmState(id) {
+    const tid = id === 'auto' ? 'battle' : id;
+    return {
+      ready: !!this.tracks[tid], progress: this.bgmProgress[tid] || 0, failed: (this.bgmFailed[tid] || 0) >= 2,
+      rendering: !!(this.bgmJob && this.bgmJob.id === tid), playing: !!(this.cur && this.cur.id === tid),
+    };
+  }
+
+  // soundtrack tracks needed right now, most urgent first
+  _bgmWanted() {
+    const w = [];
+    const add = (id, urgent) => { if (id && BGM_TRACKS[id] && !w.some((x) => x.id === id)) w.push({ id, urgent }); };
+    add(this.previewId, true);
+    if (this.inMatch) add(this.matchBgm, false);
+    add(this.bgmChoice === 'random' ? (this.inMatch ? null : this.randomNext) : this.bgmChoice, false);
+    return w;
+  }
+
+  _bgmPlan() {
+    const wanted = this._bgmWanted();
+    const job = this.bgmJob;
+    if (job && !job.ctl.cancelled) {
+      // drop a render nobody needs any more, or one that holds up a preview
+      const top = wanted.find((x) => !this.tracks[x.id]);
+      if (!wanted.some((x) => x.id === job.id) || (top && top.urgent && top.id !== job.id)) job.ctl.cancelled = true;
+    }
+    this._gcBgm(wanted);
+    this._pumpBgm();
+  }
+
+  // keep only the soundtrack tracks that are wanted or still audible (memory)
+  _gcBgm(wanted = this._bgmWanted()) {
+    const keep = new Set(wanted.map((x) => x.id));
+    if (this.cur) keep.add(this.cur.id);
+    for (const o of this.old) keep.add(o.id);
+    for (const id of Object.keys(this.tracks)) if (BGM_TRACKS[id] && !keep.has(id)) delete this.tracks[id];
+  }
+
+  // one soundtrack render at a time, in the background; previews jump the queue
+  _pumpBgm() {
+    if (this.bgmJob) return;
+    const next = this._bgmWanted().find((x) => !this.tracks[x.id] && (this.bgmFailed[x.id] || 0) < 2);
+    if (!next) {
+      if (this.bgmHost) { this.bgmHost.dispose(); this.bgmHost = null; }
+      return;
+    }
+    const ctl = { cancelled: false, onProgress: (p) => { this.bgmProgress[next.id] = Math.max(this.bgmProgress[next.id] || 0, p); } };
+    const job = { id: next.id, ctl };
+    this.bgmJob = job;
+    this.bgmProgress[next.id] = 0;
+    (async () => {
+      try {
+        if (!offlineSupported) throw new Error('unsupported');
+        const base = this.prepare(); // the base set owns the shared render infrastructure
+        await this._setupInfra();
+        if (!next.urgent) await base; // background renders wait for SFX / menu / battle first
+        if (ctl.cancelled) throw new Error('cancelled');
+        if (!this.bgmHost) this.bgmHost = new DspHost(this.budget, !this.noWorker, 1);
+        const t0 = perfNow();
+        await this._prepTrack(next.id, this.pool.withPrio(next.urgent ? -1 : 50), !!this.cache.db, ctl, this.bgmHost);
+        this.stats.steps[`bgm:${next.id}`] = Math.round(perfNow() - t0);
+        this.bgmProgress[next.id] = 1;
+      } catch (e) {
+        this.bgmProgress[next.id] = 0;
+        if (!ctl.cancelled) {
+          this.bgmFailed[next.id] = (this.bgmFailed[next.id] || 0) + 1;
+          this.stats.log.push({ step: `bgm:${next.id}`, error: String((e && e.message) || e) });
+        }
+      } finally {
+        if (this.bgmJob === job) this.bgmJob = null;
+        this._gcBgm();
+        this._tick();
+        this._pumpBgm();
+      }
+    })();
   }
 
   setIntensity(x) {
@@ -564,14 +735,30 @@ export class AudioEngine {
     if (!ctx || ctx.state !== 'running' || this.paused) return;
     const t = ctx.currentTime;
     this._tickLoops(t);
-    let want = TRACK_OF[this.mode] || null;
-    if (want === 'boss' && !this.tracks.boss) want = 'battle';
-    if (want && !this.tracks[want]) want = this.cur ? this.cur.id : null;
+    let want = this._want();
     if (t < this.holdUntil) want = null;
     const curId = this.cur ? this.cur.id : null;
     if (want !== curId) this._switch(want, t);
     if (this.cur) { this._schedule(t); this._mix(t, false); }
     if (this.old.length) this._reapOld(t);
+  }
+
+  // the track that should play: a settings preview, else the match's chosen soundtrack (build /
+  // battle / boss), else the built-in score. Anything not rendered yet keeps the current music
+  // (or the built-in fallback) until it is ready.
+  _want() {
+    const base = TRACK_OF[this.mode] || null;
+    let want = base;
+    const cur = this.cur ? this.cur.id : null;
+    if (this.previewId) want = this.tracks[this.previewId] ? this.previewId : cur || base;
+    else if (base && base !== 'menu' && this.inMatch && this.matchBgm) {
+      // a newly chosen soundtrack still rendering: keep the soundtrack that plays, else the built-in
+      if (this.tracks[this.matchBgm]) want = this.matchBgm;
+      else if (cur && this.tracks[cur] && this.tracks[cur].bgm) want = cur;
+    }
+    if (want === 'boss' && !this.tracks.boss) want = 'battle';
+    if (want && !this.tracks[want]) want = this.cur ? this.cur.id : null;
+    return want;
   }
 
   _switch(to, t) {
@@ -598,7 +785,10 @@ export class AudioEngine {
     const fadeIn = !from ? (to === 'menu' ? 2.5 : 1.2) : to === 'boss' ? 0 : from.id === 'menu' || to === 'menu' ? 1.6 : 0.6;
     const p = inst.out.gain;
     if (fadeIn > 0) { p.setValueAtTime(0, T); p.linearRampToValueAtTime(1, T + fadeIn); } else p.setValueAtTime(1, T);
-    inst.nextSec = to === 'menu' && t - this.lastMenuEnd < 30 ? 'A' : tr.first;
+    // back to the menu soon after leaving it: skip the intro; a soundtrack that becomes ready in the
+    // middle of a fight enters on a full section instead of its intro
+    const fight = (this.mode === 'battle' || this.mode === 'boss') && to !== this.previewId;
+    inst.nextSec = to === 'menu' && t - this.lastMenuEnd < 30 ? 'A' : tr.entry && fight ? tr.entry : tr.first;
     this.cur = inst;
     this._mix(t, true);
   }
@@ -632,8 +822,14 @@ export class AudioEngine {
     const opts = tr.next[sec] || {};
     const keys = Object.keys(opts);
     if (!keys.length) return tr.first;
-    let r = this.rng() * keys.reduce((s, k) => s + opts[k], 0);
-    for (const k of keys) { r -= opts[k]; if (r <= 0) return k; }
+    // soundtrack sections carry an energy level: boss fights and heavy pressure lean toward the
+    // big sections, calm build phases a little toward the lighter ones
+    const E = tr.energy;
+    const bias = !E || this.previewId === tr.id ? null : this.mode === 'boss' ? ENERGY_BIAS.boss
+      : this.mode === 'battle' && this.intensity > 0.55 ? ENERGY_BIAS.hot : this.mode === 'build' ? ENERGY_BIAS.build : null;
+    const w = keys.map((k) => opts[k] * (bias && E[k] != null ? bias[E[k]] : 1));
+    let r = this.rng() * w.reduce((s, x) => s + x, 0);
+    for (let i = 0; i < keys.length; i++) { r -= w[i]; if (r <= 0) return keys[i]; }
     return keys[keys.length - 1];
   }
 
@@ -667,12 +863,15 @@ export class AudioEngine {
   // stem levels for the current mode (quantized to the next bar when the mode changes)
   _mix(t, immediate) {
     const c = this.cur;
+    const tr = this.tracks[c.id];
+    if (tr && tr.bgm && c.stems.bed && c.stems.drums && c.stems.heat) { this._mixBgm(c, t, immediate); return; }
     const mode = this.mode;
     const setAt = (p, v, T, tau) => { p.cancelScheduledValues(T); p.setTargetAtTime(v, T, tau); };
     if (c.id === 'battle') {
-      const battle = mode !== 'build' && mode !== 'menu';
-      const key = battle ? 'battle' : 'build';
-      const heat = battle ? smooth(0.06, 0.72, this.intensity) : 0;
+      const preview = this.previewId === 'battle'; // settings preview of the built-in score
+      const battle = preview || (mode !== 'build' && mode !== 'menu');
+      const key = preview ? 'preview' : battle ? 'battle' : 'build';
+      const heat = preview ? 0.75 : battle ? smooth(0.06, 0.72, this.intensity) : 0;
       if (c.mixMode !== key) {
         // enter on the bar where a just-requested wave/boss stinger hits, else the next bar
         const hit = this.pendingHit;
@@ -712,6 +911,36 @@ export class AudioEngine {
     }
   }
 
+  // Soundtrack stems. build: the bed alone, low-passed (the kit enters with the wave on a bar);
+  // battle: heat follows the pressure from an audible floor so the hook never vanishes; boss: near
+  // full; preview: the whole arrangement.
+  _mixBgm(c, t, immediate) {
+    const T = ALL_TRACKS[c.id];
+    const S = c.stems;
+    const setAt = (p, v, at, tau) => { p.cancelScheduledValues(at); p.setTargetAtTime(v, at, tau); };
+    const x = this.intensity;
+    let key, bed = 1, drums = 1, heat, cut = 18000;
+    if (this.previewId === c.id) { key = 'preview'; heat = 1; } else if (this.mode === 'boss') { key = 'boss'; heat = 0.7 + 0.3 * smooth(0, 0.8, x); } else if (this.mode === 'battle') {
+      key = 'battle';
+      const floor = T.heatFloor ?? 0.3;
+      heat = floor + (1 - floor) * smooth(0.06, 0.72, x);
+    } else { key = 'build'; bed = T.buildBed ?? 0.8; drums = 0; heat = 0; cut = T.buildCut ?? 3200; }
+    if (c.mixMode !== key) {
+      // enter on the bar where a just-requested wave/boss stinger hits, else the next bar
+      const hit = this.pendingHit;
+      const at = immediate ? c.origin : hit && hit > t + 0.02 && hit - t < 2.5 ? hit : this._nextBar(c, t + 0.03);
+      const calm = key === 'build';
+      setAt(S.bed.gain, bed, at, immediate ? 0.01 : calm ? 0.6 : 0.05);
+      setAt(S.drums.gain, drums, at, immediate ? 0.01 : calm ? 0.22 : 0.012);
+      setAt(S.heat.gain, heat, at, immediate ? 0.01 : calm ? 0.5 : 0.35);
+      setAt(c.bedFilter.frequency, cut, at, immediate ? 0.01 : calm ? 0.7 : 0.25);
+      c.mixMode = key; c.modeT = at; c.heat = heat;
+    } else if ((key === 'battle' || key === 'boss') && t > c.modeT + 0.5 && Math.abs(heat - c.heat) > 0.025) {
+      S.heat.gain.setTargetAtTime(heat, t, 0.9);
+      c.heat = heat;
+    }
+  }
+
   _fadeOut(inst, T, tau) {
     const p = inst.fade.gain;
     try { p.cancelScheduledValues(T); p.setTargetAtTime(0, T, tau); } catch (e) { /* ignore */ }
@@ -723,12 +952,14 @@ export class AudioEngine {
   }
 
   _reapOld(t) {
+    const n = this.old.length;
     this.old = this.old.filter((inst) => {
       if (t < inst.dead) return true;
       for (const v of inst.voices) { try { v.src.stop(); v.src.disconnect(); } catch (e) { /* ignore */ } }
       try { inst.out.disconnect(); inst.fade.disconnect(); } catch (e) { /* ignore */ }
       return false;
     });
+    if (this.old.length !== n) this._gcBgm(); // a soundtrack that just faded out may be dropped now
   }
 
   // ================================================================== stingers
@@ -780,7 +1011,8 @@ export class AudioEngine {
 // The game calls these every frame from the very first frame (before any gesture, while muted,
 // after disposal...): no public method may ever throw. State is recorded and applied once the
 // context exists and assets are ready.
-for (const k of ['unlock', 'pause', 'resume', 'setVolumes', 'play', 'setLoop', 'setHum', 'setMusic', 'setIntensity', 'stinger', '_tick']) {
+for (const k of ['unlock', 'pause', 'resume', 'setVolumes', 'play', 'setLoop', 'setHum', 'setMusic', 'setIntensity', 'stinger', '_tick',
+  'setBgmChoice', 'beginMatch', 'preview', 'bgmState']) {
   const f = AudioEngine.prototype[k];
   AudioEngine.prototype[k] = function guarded(...args) {
     try { return f.apply(this, args); } catch (e) {

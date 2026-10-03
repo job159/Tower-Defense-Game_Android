@@ -1,6 +1,6 @@
 // Offline synthesis building blocks (Web Audio node graphs rendered in OfflineAudioContexts).
 // Every instrument builder has the shape fn(ctx, out, t, ..., opts) and returns its end time.
-import { mtof, makeRng, hashStr, whiteNoise, pinkNoise, brownNoise, clamp, dbToGain, makeGatedIR } from './dsp.js';
+import { mtof, makeRng, hashStr, whiteNoise, pinkNoise, brownNoise, clamp, dbToGain, makeGatedIR, crackle } from './dsp.js';
 
 // ------------------------------------------------------------------ buffers
 export function bufferFrom(ctx, chs, sr) {
@@ -369,7 +369,8 @@ export function leadNote(ctx, out, t, dur, midi, o = {}) {
   lp.frequency.setTargetAtTime(400, t + dur, r / 3);
   const amp = ctx.createGain();
   adsr(amp.gain, t, dur, { a, d: 0.4, s: 0.85, r, peak: o.gain ?? 0.3 });
-  chain(merger, lp, amp, out);
+  if (o.drive) chain(merger, lp, amp, shaper(ctx, o.drive, 0.05), biquad(ctx, 'highpass', 120, 0.7), out);
+  else chain(merger, lp, amp, out);
   return end;
 }
 
@@ -643,4 +644,434 @@ export function riser(ctx, out, t, dur, o = {}) {
     chain(merger, lp, sg, out);
   }
   return end;
+}
+
+// ================================================================== selectable BGM voices (v2.3)
+// Electric piano, reese / growl basses, chip voices, shakuhachi, plucked string, brass, vocal hits,
+// metal percussion, vinyl. Same contract as above; none of the earlier instruments changed.
+const coefCache = new Map();
+function customWave(ctx, key, make) {
+  let c = coefCache.get(key);
+  if (!c) { c = make(); coefCache.set(key, c); }
+  return ctx.createPeriodicWave(c[0], c[1], { disableNormalization: false });
+}
+// band-limited pulse, duty d (the browser drops partials above Nyquist per note)
+function pulseCoefs(d, N = 96) {
+  const re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  for (let n = 1; n <= N; n++) re[n] = (4 / (n * Math.PI)) * Math.sin(n * Math.PI * d);
+  return [re, im];
+}
+// 4-bit stepped triangle (NES): exact Fourier series of the 32-step staircase
+function stepTriCoefs(N = 96) {
+  const re = new Float32Array(N + 1), im = new Float32Array(N + 1);
+  const v = [];
+  for (let k = 0; k < 32; k++) v.push((k < 16 ? 15 - k : k - 16) / 7.5 - 1);
+  for (let n = 1; n <= N; n++) {
+    const w = 2 * Math.PI * n;
+    let a = 0, b = 0;
+    for (let k = 0; k < 32; k++) {
+      const t0 = k / 32, t1 = (k + 1) / 32;
+      a += (2 * v[k] * (Math.sin(w * t1) - Math.sin(w * t0))) / w;
+      b += (2 * v[k] * (Math.cos(w * t0) - Math.cos(w * t1))) / w;
+    }
+    re[n] = a; im[n] = b;
+  }
+  return [re, im];
+}
+const cosCoefs = () => [new Float32Array([0, 1]), new Float32Array([0, 0])];
+
+// Suitcase-style electric piano: 1:1 FM pair (body + bark, brighter with velocity), tine "ding"
+// partial, struck decay while held + damper release, stereo tremolo.
+export function epiano(ctx, out, t, dur, midi, o = {}) {
+  const f = mtof(midi);
+  const nyq = ctx.sampleRate * 0.45;
+  const vel = o.vel ?? 0.7;
+  const dec = o.decay ?? Math.max(1.2, 3.4 - (midi - 48) * 0.045);
+  const r = o.r ?? 0.22;
+  const end = t + Math.min(dur + r * 1.5, dec * 1.25) + 0.08;
+  const mod = osc(ctx, 'sine', f * (o.ratio ?? 1), t, end);
+  const mg = ctx.createGain();
+  const I = (o.index ?? 1.3) * (0.45 + vel);
+  mg.gain.setValueAtTime(I * f, t);
+  mg.gain.setTargetAtTime(I * f * (o.idxSus ?? 0.22), t, o.idxT ?? 0.25);
+  mod.connect(mg);
+  const merger = ctx.createChannelMerger(2);
+  const det = o.det ?? 2.5;
+  [-det, det].forEach((d, side) => { const c = osc(ctx, 'sine', f, t, end, d); mg.connect(c.frequency); c.connect(merger, 0, side); });
+  const sum = gainNode(ctx, 1);
+  merger.connect(sum);
+  const tf = f * (o.tine ?? 13.9);
+  if (tf < nyq) {
+    const tn = osc(ctx, 'sine', tf, t, t + 0.3);
+    const tg = ctx.createGain();
+    perc(tg.gain, t, (o.ding ?? 0.12) * (0.4 + vel), 0.07, 0.0005);
+    tn.connect(tg); tg.connect(sum);
+  }
+  const amp = ctx.createGain();
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(1, t + 0.0025);
+  amp.gain.setTargetAtTime(0, t + 0.0025, dec / 4.6);
+  amp.gain.setTargetAtTime(0, t + dur, r / 4.6);
+  const split = ctx.createChannelSplitter(2), m2 = ctx.createChannelMerger(2);
+  const tr = o.trem ?? 0.2;
+  const gl = gainNode(ctx, 1 - tr), gr = gainNode(ctx, 1 - tr);
+  if (tr > 0) {
+    const l = osc(ctx, 'sine', o.tremHz ?? 4.3, t, end);
+    const a1 = gainNode(ctx, tr), a2 = gainNode(ctx, -tr);
+    l.connect(a1); l.connect(a2); a1.connect(gl.gain); a2.connect(gr.gain);
+  }
+  chain(sum, amp, shaper(ctx, o.drive ?? 1.25, 0.03), split);
+  split.connect(gl, 0); split.connect(gr, 1);
+  gl.connect(m2, 0, 0); gr.connect(m2, 0, 1);
+  chain(m2, biquad(ctx, 'lowpass', o.lp ?? 6500, 0.6), gainNode(ctx, o.gain ?? 0.4), out);
+  return end;
+}
+
+// Reese: four detuned saws split L/R, moving low-pass, saturation. High-passed: pair it with a
+// mono sub (subNote) for the fundamental.
+export function reese(ctx, out, t, dur, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const a = o.a ?? 0.01, r = o.r ?? 0.1;
+  const end = t + dur + r * 1.5 + 0.05;
+  const merger = ctx.createChannelMerger(2);
+  const det = o.det ?? 16;
+  for (const [d, side] of [[-det, 0], [det * 0.45, 0], [det, 1], [-det * 0.45, 1]]) {
+    const s = osc(ctx, 'sawtooth', f, t + rng() / f, end, d + (rng() - 0.5) * 2);
+    const g = gainNode(ctx, 0.5);
+    s.connect(g); g.connect(merger, 0, side);
+  }
+  const lp = biquad(ctx, 'lowpass', o.cut ?? 700, o.q ?? 1.4);
+  if (o.sweep) { lp.frequency.setValueAtTime(o.sweep[0], t); lp.frequency.exponentialRampToValueAtTime(o.sweep[1], t + Math.max(0.05, dur)); }
+  if (o.lfo) {
+    const l = ctx.createOscillator();
+    l.setPeriodicWave(customWave(ctx, 'cos', cosCoefs));
+    l.frequency.value = o.lfo;
+    l.start(t); l.stop(end);
+    const lg = gainNode(ctx, -(o.lfoDepth ?? 900));
+    l.connect(lg); lg.connect(lp.detune);
+  }
+  const amp = ctx.createGain();
+  adsr(amp.gain, t, dur, { a, d: 0.2, s: 0.9, r, peak: 1 });
+  chain(merger, lp, shaper(ctx, o.drive ?? 2.2, 0.04), biquad(ctx, 'highpass', o.hp ?? 120, 0.7),
+    biquad(ctx, 'peaking', o.honk ?? 520, 1, o.honkDb ?? 2), amp, gainNode(ctx, o.gain ?? 0.5), out);
+  return end;
+}
+
+// Wobble / "talking" bass: saws + sub-octave square through an LFO-swept resonant low-pass and two
+// moving formant peaks (cosine-phase LFO: every note starts closed), drive. Mono, high-passed.
+export function growl(ctx, out, t, dur, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const a = o.a ?? 0.005, r = o.r ?? 0.08;
+  const end = t + dur + r * 1.5 + 0.05;
+  const sum = gainNode(ctx, 0.5);
+  for (const d of [-(o.det ?? 9), o.det ?? 9]) osc(ctx, 'sawtooth', f, t + rng() / f, end, d).connect(sum);
+  const sq = osc(ctx, 'square', f / 2, t, end);
+  const sg = gainNode(ctx, o.sq ?? 0.5);
+  sq.connect(sg); sg.connect(sum);
+  const lfo = ctx.createOscillator();
+  lfo.setPeriodicWave(customWave(ctx, 'cos', cosCoefs));
+  lfo.frequency.value = o.rate ?? 4;
+  lfo.start(t); lfo.stop(end);
+  const c0 = o.cut0 ?? 180, c1 = o.cut1 ?? 2400;
+  const lp = biquad(ctx, 'lowpass', Math.sqrt(c0 * c1), o.q ?? 4);
+  const lg = gainNode(ctx, -600 * Math.log2(c1 / c0));
+  lfo.connect(lg); lg.connect(lp.detune);
+  const f1 = biquad(ctx, 'peaking', o.fA ?? 650, 3, o.fDb ?? 8), f2 = biquad(ctx, 'peaking', o.fB ?? 1400, 4, (o.fDb ?? 8) * 0.8);
+  const fg = gainNode(ctx, -(o.formDepth ?? 700));
+  lfo.connect(fg); fg.connect(f1.detune); fg.connect(f2.detune);
+  const amp = ctx.createGain();
+  adsr(amp.gain, t, dur, { a, d: 0.1, s: 0.95, r, peak: 1 });
+  chain(sum, lp, f1, f2, shaper(ctx, o.drive ?? 2.6, 0.08), biquad(ctx, 'highpass', o.hp ?? 85, 0.7), amp, gainNode(ctx, o.gain ?? 0.5), out);
+  return end;
+}
+
+// Chip voice: band-limited pulse (duty) or 4-bit triangle (o.tri) with optional slide-in, fast
+// arpeggio (semitone list), pitch drop and delayed vibrato. Mono.
+export function pulse(ctx, out, t, dur, midi, o = {}) {
+  const f = mtof(midi);
+  const a = o.a ?? 0.003, r = o.r ?? 0.05;
+  const end = t + dur + r * 1.5 + 0.05;
+  const s = ctx.createOscillator();
+  const duty = o.duty ?? 0.25;
+  s.setPeriodicWave(o.tri ? customWave(ctx, 'tri4', stepTriCoefs) : customWave(ctx, `pulse${duty}`, () => pulseCoefs(duty)));
+  s.frequency.value = f;
+  if (o.from != null) { s.frequency.setValueAtTime(mtof(o.from), t); s.frequency.exponentialRampToValueAtTime(f, t + (o.glide ?? 0.05)); }
+  if (o.arp) {
+    const step = o.arpStep ?? 1 / 30;
+    let i = 0;
+    for (let tt = t; tt < t + dur + r; tt += step, i++) s.frequency.setValueAtTime(f * Math.pow(2, o.arp[i % o.arp.length] / 12), tt);
+  }
+  if (o.drop) { s.frequency.setValueAtTime(f, t); s.frequency.exponentialRampToValueAtTime(f * Math.pow(2, -o.drop / 12), t + (o.dropT ?? 0.08)); }
+  if (o.vib) {
+    const v = osc(ctx, 'triangle', o.vibHz ?? 6, t, end);
+    const vg = ctx.createGain();
+    const vd = o.vibDelay ?? 0.18;
+    vg.gain.setValueAtTime(0, t); vg.gain.setValueAtTime(0, t + vd); vg.gain.linearRampToValueAtTime(o.vib, t + vd + 0.12);
+    v.connect(vg); vg.connect(s.detune);
+  }
+  s.start(t); s.stop(end);
+  const amp = ctx.createGain();
+  adsr(amp.gain, t, dur, { a, d: o.d ?? 0.12, s: o.s ?? 0.7, r, peak: o.gain ?? 0.3 });
+  chain(s, amp, biquad(ctx, 'lowpass', o.lp ?? 12000, 0.5), out);
+  return end;
+}
+
+// Chip noise channel: 15-bit LFSR (long or short/metallic mode) clocked at `rate` (gliding to
+// rate1), 4-bit stepped volume decay. Mono.
+export function chipNoise(ctx, out, t, o = {}) {
+  const sr = ctx.sampleRate;
+  const dur = o.dur ?? 0.25;
+  const n = Math.max(32, Math.ceil(dur * sr));
+  const d = new Float32Array(n);
+  const rng = o.rng || Math.random;
+  let reg = 1 + Math.floor(rng() * 32766);
+  const tap = o.short ? 6 : 1;
+  const r0 = o.rate ?? 12000, r1 = o.rate1 ?? r0, rt = o.rateT ?? 0.05;
+  const dec = o.decay ?? 0.12;
+  let ph = 0, v = 1;
+  for (let i = 0; i < n; i++) {
+    const tt = i / sr;
+    const rate = r1 !== r0 ? r0 * Math.pow(r1 / r0, Math.min(1, tt / rt)) : r0;
+    ph += rate / sr;
+    while (ph >= 1) { ph -= 1; const fb = (reg ^ (reg >> tap)) & 1; reg = (reg >> 1) | (fb << 14); v = reg & 1 ? -1 : 1; }
+    let e = Math.exp((-tt * 6.9) / dec);
+    if (o.steps !== false) e = Math.round(e * 15) / 15;
+    d[i] = v * e * (i < 24 ? i / 24 : 1);
+  }
+  const src = ctx.createBufferSource();
+  src.buffer = bufferFrom(ctx, [d], sr);
+  chain(src, biquad(ctx, 'highpass', o.hp ?? 90, 0.7), biquad(ctx, 'lowpass', o.lp ?? 13000, 0.6), gainNode(ctx, o.gain ?? 0.5), out);
+  src.start(t);
+  return t + dur;
+}
+
+// Shakuhachi-like flute: mellow harmonic tone, meri/kari bend into the note, slow "yuri" vibrato,
+// tonal breath + air noise, chiff on the attack. Mono.
+const fluteCoefs = () => [new Float32Array(8), new Float32Array([0, 1, 0.3, 0.13, 0.06, 0.03, 0.018, 0.01])];
+export function flute(ctx, out, t, dur, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const a = o.a ?? 0.09, r = o.r ?? 0.3;
+  const end = t + dur + r * 1.5 + 0.05;
+  const s = ctx.createOscillator();
+  s.setPeriodicWave(customWave(ctx, 'flute', fluteCoefs));
+  const bend = o.bend ?? 0;
+  s.frequency.setValueAtTime(f * Math.pow(2, -bend / 12), t);
+  if (bend) s.frequency.setTargetAtTime(f, t + 0.02, (o.bendT ?? 0.12) / 3);
+  if (o.fall) s.frequency.setTargetAtTime(f * Math.pow(2, -o.fall / 12), t + dur * 0.92, 0.05);
+  s.start(t); s.stop(end);
+  const v = osc(ctx, 'sine', o.vibHz ?? 5.2, t, end);
+  const vg = ctx.createGain();
+  vg.gain.setValueAtTime(0, t);
+  vg.gain.setValueAtTime(0, t + Math.min(dur * 0.4, 0.35));
+  vg.gain.linearRampToValueAtTime(o.vib ?? 22, t + Math.max(0.25, dur * 0.9));
+  v.connect(vg); vg.connect(s.detune);
+  const tone = gainNode(ctx, 1);
+  s.connect(tone);
+  const nz = noise(ctx, 'white', t, end, rng);
+  const br = o.breath ?? 0.35;
+  chain(nz, biquad(ctx, 'bandpass', Math.min(f * 2, 9000), 3), gainNode(ctx, br), tone);
+  chain(nz, biquad(ctx, 'highpass', 3200, 0.6), gainNode(ctx, br * 0.22), tone);
+  const cg = ctx.createGain();
+  perc(cg.gain, t, o.chiff ?? 0.6, 0.07, 0.004);
+  chain(nz, biquad(ctx, 'bandpass', Math.min(f * 3, 6500), 1.2), cg, tone);
+  const amp = ctx.createGain();
+  const pk = o.gain ?? 0.3;
+  amp.gain.setValueAtTime(0, t);
+  amp.gain.linearRampToValueAtTime(pk, t + a);
+  amp.gain.setTargetAtTime(pk * (o.s ?? 0.82), t + a, 0.18);
+  amp.gain.setTargetAtTime(0, t + dur, r / 4.6);
+  chain(tone, amp, biquad(ctx, 'lowpass', o.lp ?? 7000, 0.5), biquad(ctx, 'highpass', 140, 0.6), out);
+  return end;
+}
+
+// Plucked string (koto / guitar-ish), additive: partials weighted by the pluck position, higher
+// partials decay faster, slight stiffness, sharp attack settling ("twang"), optional press-bend.
+export function pluckStr(ctx, out, t, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const dec = o.decay ?? 1.4;
+  const nyq = ctx.sampleRate * 0.45;
+  const pos = o.pos ?? 0.2;
+  const K = Math.max(1, Math.min(o.partials ?? 10, Math.floor(nyq / f)));
+  const end = t + dec + 0.1;
+  const sum = gainNode(ctx, 1);
+  const B = o.inharm ?? 0.0003;
+  const tw = o.twang ?? 18;
+  for (let k = 1; k <= K; k++) {
+    const fk = f * k * Math.sqrt(1 + B * k * k);
+    if (fk >= nyq) break;
+    const amp = Math.abs(Math.sin(k * Math.PI * pos)) / Math.pow(k, o.tilt ?? 1.15);
+    if (amp < 0.004) continue;
+    const s = osc(ctx, 'sine', fk, t, end);
+    if (tw) { s.detune.setValueAtTime(tw, t); s.detune.setTargetAtTime(0, t, 0.015); }
+    if (o.bendTo != null) {
+      s.frequency.setValueAtTime(fk, t + o.bendAt);
+      s.frequency.exponentialRampToValueAtTime(fk * Math.pow(2, (o.bendTo - midi) / 12), t + o.bendAt + (o.bendT ?? 0.12));
+    }
+    const g = ctx.createGain();
+    perc(g.gain, t, amp, dec / (1 + (k - 1) * (o.damp ?? 0.45)), 0.0015);
+    s.connect(g); g.connect(sum);
+  }
+  const nz = noise(ctx, 'white', t, t + 0.03, rng);
+  const ng = ctx.createGain();
+  perc(ng.gain, t, o.pick ?? 0.2, 0.012, 0.0005);
+  chain(nz, biquad(ctx, 'bandpass', o.pickF ?? 3200, 0.9), ng, sum);
+  chain(sum, biquad(ctx, 'peaking', o.body ?? 380, 1.2, o.bodyDb ?? 3), biquad(ctx, 'highpass', 60, 0.7), gainNode(ctx, o.gain ?? 0.5), out);
+  return end;
+}
+
+// Brass / horn: three detuned saws, filter "blat" on the attack settling lower, slight scoop into
+// pitch, delayed vibrato, brass formant, gentle drive. Stereo from the outer saws.
+export function horn(ctx, out, t, dur, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const a = o.a ?? 0.05, r = o.r ?? 0.35;
+  const end = t + dur + r * 1.5 + 0.05;
+  const merger = ctx.createChannelMerger(2);
+  const vib = osc(ctx, 'sine', o.vibHz ?? 5, t, end);
+  const vd = ctx.createGain();
+  vd.gain.setValueAtTime(0, t); vd.gain.setValueAtTime(0, t + 0.3); vd.gain.linearRampToValueAtTime(o.vib ?? 9, t + 0.8);
+  vib.connect(vd);
+  [[-(o.det ?? 6), 0], [0, 2], [o.det ?? 6, 1]].forEach(([d, side]) => {
+    const s = osc(ctx, 'sawtooth', f, t + rng() / f, end, d);
+    s.detune.setValueAtTime(d - (o.scoop ?? 35), t);
+    s.detune.linearRampToValueAtTime(d, t + 0.06);
+    vd.connect(s.detune);
+    if (o.from != null) { s.frequency.setValueAtTime(mtof(o.from), t); s.frequency.exponentialRampToValueAtTime(f, t + (o.glide ?? 0.08)); }
+    if (side === 2) { s.connect(merger, 0, 0); s.connect(merger, 0, 1); } else s.connect(merger, 0, side);
+  });
+  const cut = o.cut ?? 1500;
+  const lp = biquad(ctx, 'lowpass', 300, o.q ?? 1.1);
+  lp.frequency.setValueAtTime(o.cut0 ?? 280, t);
+  lp.frequency.exponentialRampToValueAtTime(cut * (o.blat ?? 1.7), t + a + 0.05);
+  lp.frequency.setTargetAtTime(cut, t + a + 0.05, 0.15);
+  lp.frequency.setTargetAtTime(300, t + dur, r / 3);
+  const amp = ctx.createGain();
+  adsr(amp.gain, t, dur, { a, d: 0.3, s: o.s ?? 0.85, r, peak: 1 });
+  chain(merger, lp, biquad(ctx, 'peaking', o.formant ?? 1150, 1.2, 3), amp, shaper(ctx, o.drive ?? 1.5, 0.04), biquad(ctx, 'highpass', 60, 0.7), gainNode(ctx, o.gain ?? 0.4), out);
+  return end;
+}
+
+// Vocal hit / chop: three saw voices through vowel formants with a pitch fall (shouts, kakegoe,
+// glitch chops); lots of breath. Stereo.
+export function voxHit(ctx, out, t, dur, midi, o = {}) {
+  const rng = o.rng || Math.random;
+  const f = mtof(midi);
+  const r = o.r ?? 0.12;
+  const end = t + dur + r * 1.5 + 0.05;
+  const merger = ctx.createChannelMerger(2);
+  const src = gainNode(ctx, 0.6);
+  merger.connect(src);
+  for (let s = 0; s < 3; s++) {
+    const o1 = osc(ctx, 'sawtooth', f, t + rng() / f, end, (s - 1) * 12 + (rng() - 0.5) * 6);
+    if (o.drop) o1.frequency.setTargetAtTime(f * Math.pow(2, -o.drop / 12), t + dur * 0.3, dur * 0.5);
+    if (s === 1) { o1.connect(merger, 0, 0); o1.connect(merger, 0, 1); } else o1.connect(merger, 0, s ? 1 : 0);
+  }
+  const nz = noise(ctx, 'white', t, end, rng);
+  chain(nz, biquad(ctx, 'highpass', 900, 0.5), gainNode(ctx, o.breath ?? 0.25), src);
+  const amp = ctx.createGain();
+  adsr(amp.gain, t, dur, { a: o.a ?? 0.006, d: dur * 0.6, s: o.s ?? 0.6, r, peak: 1 });
+  src.connect(amp);
+  const sum = gainNode(ctx, (o.gain ?? 0.5) * 4);
+  for (const [F, dB, bw] of vowelSet(midi, o.vowel || 'a')) {
+    const bp = biquad(ctx, 'bandpass', F, F / bw);
+    const g = gainNode(ctx, dbToGain(dB));
+    amp.connect(bp); bp.connect(g); g.connect(sum);
+  }
+  chain(sum, shaper(ctx, o.drive ?? 1.3, 0.02), biquad(ctx, 'highpass', o.hp ?? 160, 0.6), out);
+  return end;
+}
+
+// Anvil / metal clang: inharmonic bar modes (slightly detuned L/R), noise strike, drive.
+export function anvil(ctx, out, t, o = {}) {
+  const rng = o.rng || Math.random;
+  const f0 = o.f ?? 780, dec = o.decay ?? 1.0;
+  const end = t + dec + 0.1;
+  const merger = ctx.createChannelMerger(2);
+  const sum = gainNode(ctx, 1);
+  merger.connect(sum);
+  const nyq = ctx.sampleRate * 0.45;
+  const P = o.partials || [[1, 1, 1], [2.32, 0.7, 0.75], [4.25, 0.5, 0.5], [6.63, 0.35, 0.35], [9.38, 0.22, 0.22]];
+  for (const [ratio, amp, dk] of P) {
+    for (let side = 0; side < 2; side++) {
+      const fr = f0 * ratio * (side ? 1.0025 : 0.9975);
+      if (fr >= nyq) continue;
+      const s = osc(ctx, 'sine', fr, t, end);
+      const g = ctx.createGain();
+      perc(g.gain, t, amp, dec * dk, 0.0008);
+      s.connect(g); g.connect(merger, 0, side);
+    }
+  }
+  const nz = noise(ctx, 'white', t, t + 0.05, rng);
+  const ng = ctx.createGain();
+  perc(ng.gain, t, o.strike ?? 0.6, 0.02, 0.0004);
+  chain(nz, biquad(ctx, 'highpass', 2500, 0.7), ng, sum);
+  chain(sum, shaper(ctx, o.drive ?? 1.5, 0.02), biquad(ctx, 'highpass', o.hp ?? 200, 0.7), gainNode(ctx, o.gain ?? 0.5), out);
+  return end;
+}
+
+// Ride cymbal: low metallic cluster + sizzle + bell partials.
+export function ride(ctx, out, t, o = {}) {
+  const rng = o.rng || Math.random;
+  const dec = o.decay ?? 1.6;
+  const tune = o.tune ?? 0.82;
+  const end = t + dec + 0.1;
+  const m = metal(ctx, out, t, end - t, { tune });
+  const env = ctx.createGain();
+  perc(env.gain, t, (o.gain ?? 0.5) * 0.55, dec, 0.001);
+  chain(m, biquad(ctx, 'bandpass', o.bp ?? 5200, 0.6), biquad(ctx, 'highpass', 2800, 0.7), env, out);
+  const nz = noise(ctx, 'white', t, end, rng);
+  const ng = ctx.createGain();
+  perc(ng.gain, t, (o.gain ?? 0.5) * 0.45, dec * 0.8, 0.001);
+  chain(nz, biquad(ctx, 'highpass', 6000, 0.6), biquad(ctx, 'peaking', 9500, 0.8, 3), ng, out);
+  const bell = o.bell ?? 0.25;
+  for (const [fr, a] of [[2400, 1], [3610, 0.6], [5080, 0.35]]) {
+    const s = osc(ctx, 'sine', (fr * tune) / 0.82, t, t + 0.8);
+    const g = ctx.createGain();
+    perc(g.gain, t, (o.gain ?? 0.5) * bell * a, 0.5, 0.0008);
+    s.connect(g); g.connect(out);
+  }
+  return end;
+}
+
+// Rimshot / side-stick click.
+export function rim(ctx, out, t, o = {}) {
+  const rng = o.rng || Math.random;
+  const end = t + 0.25;
+  const f = o.f ?? 1700, dec = o.decay ?? 0.045;
+  const sum = gainNode(ctx, 1);
+  const a = osc(ctx, 'triangle', f, t, end);
+  const ag = ctx.createGain(); perc(ag.gain, t, 0.5, dec, 0.0004);
+  a.connect(ag); ag.connect(sum);
+  const b = osc(ctx, 'sine', f * 0.31, t, end);
+  const bg = ctx.createGain(); perc(bg.gain, t, 0.6, dec * 1.6, 0.0004);
+  b.connect(bg); bg.connect(sum);
+  const nz = noise(ctx, 'white', t, t + 0.03, rng);
+  const ng = ctx.createGain(); perc(ng.gain, t, o.click ?? 0.4, 0.008, 0.0003);
+  chain(nz, biquad(ctx, 'bandpass', 4000, 1), ng, sum);
+  chain(sum, shaper(ctx, o.drive ?? 1.4, 0.03), biquad(ctx, 'highpass', 250, 0.7), gainNode(ctx, o.gain ?? 0.7), out);
+  return end;
+}
+
+// Vinyl bed: sparse crackle + rare pops (independent per channel) and a little hiss.
+export function vinyl(ctx, out, t, dur, o = {}) {
+  const rng = o.rng || Math.random;
+  const sr = ctx.sampleRate;
+  const n = Math.ceil(dur * sr);
+  const chs = [0, 1].map(() => {
+    const d = crackle(n, sr, rng, { rate: o.rate ?? 9, decay: 0.0004, amp: 1 });
+    const p = crackle(n, sr, rng, { rate: o.pops ?? 0.5, decay: 0.002, amp: 1.6 });
+    for (let i = 0; i < n; i++) d[i] += p[i];
+    return d;
+  });
+  const src = ctx.createBufferSource();
+  src.buffer = bufferFrom(ctx, chs, sr);
+  chain(src, biquad(ctx, 'highpass', 900, 0.6), biquad(ctx, 'lowpass', 7000, 0.6), gainNode(ctx, o.crackle ?? 0.6), out);
+  src.start(t);
+  const h = noise(ctx, 'pink', t, t + dur, rng);
+  chain(h, biquad(ctx, 'highpass', 2500, 0.6), biquad(ctx, 'lowpass', 9000, 0.6), gainNode(ctx, o.hiss ?? 0.05), out);
+  return t + dur;
 }

@@ -5,7 +5,7 @@
 // view renders both halves the same way. The mirror is visual only: towers aim and fire cosmetically at the
 // mirrored enemies. Gameplay crosses over only through sends, lives and the end of the match.
 import { TOWERS, ENEMIES, towerBaseStats } from '../core/config.js';
-import { VS_RULES, VS_LEVEL } from '../core/versus.js';
+import { VS_RULES } from '../core/versus.js';
 import { tileToWorld } from '../core/path.js';
 
 const ENEMY_KEYS = Object.keys(ENEMIES);
@@ -17,7 +17,7 @@ const TOWERS_EVERY = 1;   // s: tower list rate (also sent right after any chang
 const ID_OFFSET = 2_000_000;
 const MAX_SNAP_ENEMIES = 140; // keeps a snapshot well under the room's 15 KB message cap
 // flags in enemy snapshots
-const F_AIR = 1, F_HIDDEN = 2, F_FROZEN = 4, F_BURN = 8, F_STUN = 16, F_WARP = 32;
+const F_AIR = 1, F_HIDDEN = 2, F_FROZEN = 4, F_BURN = 8, F_STUN = 16, F_WARP = 32, F_SENT = 64;
 const FIRE_KIND = { bullet: 'bullet', shell: 'shell', frost: 'frost', missile: 'missile', napalm: 'napalm' };
 
 export class RemoteSide {
@@ -78,6 +78,7 @@ export class RemoteSide {
         if (e.burnT > 0) f |= F_BURN;
         if (e.stunTime > 0) f |= F_STUN;
         if (e.inWarp) f |= F_WARP;
+        if (e.sent) f |= F_SENT;
         en.push([e.id, ENEMY_KEYS.indexOf(e.type), Math.round(e.x * 100), Math.round(e.z * 100), Math.round((e.hp / e.maxHp) * 100), f]);
       }
       this.room.send('snap', { l: Math.max(0, Math.ceil(g.lives)), e: g.eco, w: g.wave, en }, { reliable: false });
@@ -134,6 +135,7 @@ export class RemoteSide {
       e.burnT = f & F_BURN ? 0.3 : 0; e.burnStacks = e.burnT ? 1 : 0;
       e.detected = !(f & F_HIDDEN); e.cloakT = f & F_HIDDEN ? 1 : 0;
       e.inWarp = !!(f & F_WARP);
+      e.sent = !!(f & F_SENT); // elite look (units we sent them)
     }
     // vanished: killed (or leaked) on their side
     for (let i = this.enemies.length - 1; i >= 0; i--) {
@@ -156,8 +158,9 @@ export class RemoteSide {
       const spec = SPEC_OF[sc] || null;
       let t = this.towerMap.get(id);
       if (!t) {
-        const c = VS_LEVEL.cols - 1 - col;
-        const { x, z } = tileToWorld(VS_LEVEL, c, row);
+        const lv = this.game.level; // this match's map (both clients play the same one)
+        const c = lv.cols - 1 - col;
+        const { x, z } = tileToWorld(lv, c, row);
         t = { id, type, def: TOWERS[type], level, spec, col: c, row, x, z, aim: Math.PI, rank: rank || 0, beams: [], flameOn: false,
           disabledT: 0, cd: Math.random(), stats: towerBaseStats(type, level, spec), remote: true, kills: 0, damage: 0 };
         t.stats.attack = t.stats.attack || TOWERS[type].attack;

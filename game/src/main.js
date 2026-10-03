@@ -11,6 +11,7 @@ import { AudioEngine, setVibration } from './audio/audio.js';
 import { Screens } from './ui/screens.js';
 import { Session } from './session.js';
 import { VersusSession } from './versusSession.js';
+import { pickMapId, mapIdForSeed } from './core/versusMaps.js';
 import { h } from './ui/dom.js';
 
 const VERSION = typeof __VERSION__ !== 'undefined' ? __VERSION__ : 'dev';
@@ -26,6 +27,7 @@ class App {
     this.audio = new AudioEngine();
     this.audioProgress = 0;
     this.audio.setVolumes(this.save.settings.sfx, this.save.settings.music);
+    this.audio.setBgmChoice(this.save.settings.bgm);
     setVibration(this.save.settings.vibrate);
     this.screens = new Screens(this);
     this.session = null;
@@ -155,14 +157,27 @@ class App {
     if (s) this.startLevel(s.id, s.difficulty, s.endless, null, s.loadout);
   }
 
-  // Versus (practice vs AI or online): opts as documented in VersusSession.
+  // Versus (practice vs AI or online): opts as documented in VersusSession. Online matches carry the map the
+  // host picked (or derive it from the seed); practice gets a random one that avoids the last few played.
   startVersus(opts) {
     this.endSession();
     this.disposeMenu();
     this.screens.clear();
     this.screens.closeAllModals();
-    this.lastVersus = opts;
-    this.session = new VersusSession(this, opts);
+    const map = opts.map ?? (opts.mode === 'online' ? mapIdForSeed(opts.seed) : this.nextVersusMap());
+    this.rememberVersusMap(map);
+    this.lastVersus = { ...opts, map };
+    this.session = new VersusSession(this, this.lastVersus);
+  }
+
+  // a random versus map that avoids the recently played ones
+  nextVersusMap() { return pickMapId(this.save.data.vsRecentMaps); }
+
+  rememberVersusMap(id) {
+    const recent = (this.save.data.vsRecentMaps || []).filter((m) => m !== id);
+    recent.push(id);
+    this.save.data.vsRecentMaps = recent.slice(-6);
+    this.save.write();
   }
 
   endSession() {

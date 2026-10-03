@@ -9,12 +9,13 @@ import { TILE } from './path.js';
 import { PACKS, PACK_BY_ID, VS_LEVEL, VS_RULES } from './versus.js';
 import { mulberry32 } from './rng.js';
 
-// share: fraction of everything earned that goes into towers (the rest funds sends)
+// share: fraction of everything earned that goes into towers (the rest funds sends). Elite sends and the
+// high income cap make sending the main weapon, so even 'balanced' spends most of its income on sends.
 export const BOT_STYLES = {
-  balanced: { defense: 1.0, share: 0.62, reserve: 60, pressure: 0.5 },
-  eco:      { defense: 0.88, share: 0.5, reserve: 30, pressure: 0.2 },
+  balanced: { defense: 0.85, share: 0.4, reserve: 30, pressure: 0.7 },
+  eco:      { defense: 0.8, share: 0.36, reserve: 20, pressure: 0.2 },
   turtle:   { defense: 1.3, share: 0.85, reserve: 120, pressure: 0.4 },
-  rush:     { defense: 0.82, share: 0.48, reserve: 20, pressure: 1.0 },
+  rush:     { defense: 0.6, share: 0.3, reserve: 0, pressure: 1.0 },
 };
 // income: practice-AI income multiplier (a handicap for easy, a bonus for hard); sloppy: placement noise
 export const BOT_LEVELS = {
@@ -45,10 +46,11 @@ export class VersusBot {
   }
 
   // Coverage of this lane (ground and air route) from every buildable tile of our half, per range.
+  // Works on any versus map; stretches inside warp tunnels don't count (nothing can be hit there).
   scoreTiles() {
     const g = this.g, lv = g.level, out = [];
     const ground = g.map.paths[g.side], air = g.map.airPaths[g.side];
-    const sampleRoute = (path) => { const pts = []; const P = { x: 0, z: 0, dx: 0, dz: 0 }; for (let d = 0.8; d < path.length; d += 0.25) { path.sample(d, P); pts.push([P.x, P.z, d / path.length]); } return pts; };
+    const sampleRoute = (path) => { const pts = []; const P = { x: 0, z: 0, dx: 0, dz: 0 }; for (let d = 0.8; d < path.length; d += 0.25) { if (path.inWarp(d)) continue; path.sample(d, P); pts.push([P.x, P.z, d / path.length]); } return pts; };
     const gs = sampleRoute(ground), as = sampleRoute(air);
     for (let r = 0; r < lv.rows; r++) for (let c = 0; c < lv.cols; c++) {
       if (!g.ownsCol(c) || g.map.at(c, r) !== TILE.BUILD) continue;

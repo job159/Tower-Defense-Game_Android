@@ -44,15 +44,18 @@ export class EnemyView {
       vertexShader: `attribute vec4 aHp; varying vec2 vUv; varying vec4 vHp;
         void main(){ vUv = uv; vHp = aHp;
           vec4 mv = modelViewMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0);
-          mv.xy += position.xy * vec2(aHp.z, aHp.z > 1.5 ? 1.6 : 1.0);
+          mv.xy += position.xy * vec2(aHp.z, aHp.z > 1.5 ? 1.6 : aHp.z > 1.05 ? 1.45 : 1.0);
           gl_Position = projectionMatrix * mv; }`,
       fragmentShader: `varying vec2 vUv; varying vec4 vHp;
         void main(){
           float x = vUv.x; vec3 c = vec3(0.04, 0.04, 0.07);
           if (x < vHp.x) c = mix(vec3(1.0, 0.15, 0.2), mix(vec3(1.0, 0.8, 0.2), vec3(0.3, 1.0, 0.45), smoothstep(0.5, 0.9, vHp.x)), smoothstep(0.1, 0.5, vHp.x)) * 1.6;
           if (vUv.y > 0.5 && x < vHp.y) c = vec3(0.45, 0.75, 1.8);
-          float border = step(vUv.y, 0.14) + step(0.86, vUv.y) + step(x, 0.015) + step(0.985, x);
-          c = mix(c, vec3(0.0), min(1.0, border));
+          // sent (elite) units: z in (1.05, 1.5) -> thicker hot-magenta frame
+          bool elite = vHp.z > 1.05 && vHp.z < 1.5;
+          float bt = elite ? 0.24 : 0.14, bs = elite ? 0.03 : 0.015;
+          float border = step(vUv.y, bt) + step(1.0 - bt, vUv.y) + step(x, bs) + step(1.0 - bs, x);
+          c = mix(c, elite ? vec3(2.2, 0.3, 1.8) : vec3(0.0), min(1.0, border));
           gl_FragColor = vec4(c, vHp.w); }`,
       transparent: true, depthTest: false, depthWrite: false,
     }), this.barCap);
@@ -60,6 +63,26 @@ export class EnemyView {
     this.bars.renderOrder = 20;
     this.bars.count = 0;
     scene.add(this.bars);
+    // elite aura: a rotating magenta sigil under every unit sent by the opponent (versus)
+    this.auraCap = 128;
+    this.aura = new THREE.InstancedMesh(new THREE.RingGeometry(0.62, 1, 48, 1), new THREE.ShaderMaterial({
+      uniforms: { uTime: { value: 0 } },
+      vertexShader: `varying vec2 vP; void main(){ vP = position.xy; gl_Position = projectionMatrix * modelViewMatrix * instanceMatrix * vec4(position, 1.0); }`,
+      fragmentShader: `uniform float uTime; varying vec2 vP;
+        void main(){
+          float r = length(vP), a = atan(vP.y, vP.x);
+          float ring = smoothstep(0.62, 0.72, r) * (1.0 - smoothstep(0.84, 1.0, r));
+          float seg = step(0.3, fract(a * 6.0 / 6.2832 + uTime * 0.35));
+          float inner = 1.0 - smoothstep(0.0, 0.045, abs(r - 0.68));
+          float pulse = 0.8 + 0.2 * sin(uTime * 5.0);
+          float k = (ring * (0.4 + 0.6 * seg) + inner) * pulse;
+          gl_FragColor = vec4(vec3(2.6, 0.35, 2.0) * k, k); }`,
+      transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }), this.auraCap);
+    this.aura.frustumCulled = false;
+    this.aura.renderOrder = 6;
+    this.aura.count = 0;
+    scene.add(this.aura);
   }
 
   kind(type) {
@@ -93,8 +116,9 @@ export class EnemyView {
 
   update(enemies, dt, time) {
     for (const k of this.kinds.values()) k.n = 0;
-    let nb = 0;
+    let nb = 0, na = 0;
     const bars = this.barAttr.array;
+    this.aura.material.uniforms.uTime.value = time;
     for (const e of enemies) {
       const k = this.kind(e.type);
       if (k.n >= k.cap) this.grow(k, k.cap * 2);
@@ -109,7 +133,7 @@ export class EnemyView {
       e._walk += dt * (md.walk || 6) * Math.min(1.6, e.curSpeed + 0.05);
       if (md.bank) e._bank += (THREE.MathUtils.clamp((e._yaw - prevYaw) / Math.max(dt, 1e-3) * -0.35, -0.6, 0.6) - e._bank) * Math.min(1, dt * 6);
       const spawnS = Math.min(1, e._age / 0.35);
-      const sc = md.scale * (0.3 + 0.7 * spawnS) * (e.frozen ? 0.96 : 1);
+      const sc = md.scale * (0.3 + 0.7 * spawnS) * (e.frozen ? 0.96 : 1) * (e.sent ? 1.15 : 1);
       const bob = (md.hover ? Math.sin(time * 3 + e.phase) * 0.04 : 0) + (md.walk && e.curSpeed > 0.01 ? Math.abs(Math.sin(e._walk)) * 0.025 : 0);
       const y = (e.air ? e.y : GROUND_Y + md.hover) + bob;
       _p.set(e.x, y, e.z);
@@ -123,6 +147,7 @@ export class EnemyView {
       if (e.frozen) { mr = 0.55; mg = 0.95; mb = 1.6; }
       else if (e.stunTime > 0) { mr = 1.2; mg = 1.2; mb = 1.6; }
       else if (e.slowAmt > 0) { mr = 0.75; mg = 0.95; mb = 1.3; }
+      if (e.sent && !e.frozen) { mr *= 1.3; mg *= 0.72; mb *= 1.22; } // elite: magenta cast
       if (e.burnT > 0) { mr *= 1.5; mg *= 0.9; mb *= 0.6; }
       if (hit) { mr += 1.2; mg += 1.2; mb += 1.2; }
       // cloaked & undetected: a faint shimmering silhouette; tunnelling units are invisible
@@ -167,19 +192,27 @@ export class EnemyView {
         } else if (part.mat === 'glow') {
           const pulse = (e.boss ? 1 + 0.25 * Math.sin(time * 5) : 1) * (cloaked ? ghost * 1.6 : 1);
           const h2 = hit ? 2 : 1;
-          _c.setRGB(pulse * h2 * (e.frozen ? 0.6 : rage), pulse * h2 * (e.frozen ? 1.2 : 1 / rage), pulse * h2 * (e.frozen ? 1.8 : 1 / rage));
+          const er = e.sent && !e.frozen ? 1.5 : 1, eg = e.sent && !e.frozen ? 0.42 : 1, eb = e.sent && !e.frozen ? 1.6 : 1;
+          _c.setRGB(pulse * h2 * er * (e.frozen ? 0.6 : rage), pulse * h2 * eg * (e.frozen ? 1.2 : 1 / rage), pulse * h2 * eb * (e.frozen ? 1.8 : 1 / rage));
         } else _c.setRGB(mr, mg, mb);
         im.setColorAt(i, _c);
       }
+      if (e.sent && !cloaked && !hidden && na < this.auraCap) {
+        const ar = Math.max(0.42, (e.radius || 0.3) * 1.9) * (0.4 + 0.6 * spawnS);
+        _q.setFromEuler(_e.set(-Math.PI / 2, 0, time * 1.2 + e.phase));
+        _p.set(e.x, e.air ? y - 0.18 : GROUND_Y + 0.025, e.z);
+        _s.set(ar, ar, ar);
+        this.aura.setMatrixAt(na++, _m.compose(_p, _q, _s));
+      }
       // health bar
-      const showBar = !cloaked && !hidden && (e.boss || e.hp < e.maxHp - 0.01 || (e.maxShield > 0 && e.shield < e.maxShield - 0.01));
+      const showBar = !cloaked && !hidden && (e.boss || e.sent || e.hp < e.maxHp - 0.01 || (e.maxShield > 0 && e.shield < e.maxShield - 0.01));
       if (showBar && nb < this.barCap) {
         const by = y + (BAR_Y[e.type] || 0.7) * sc;
         _m.makeTranslation(e.x, by, e.z);
         this.bars.setMatrixAt(nb, _m);
         bars[nb * 4] = Math.max(0, e.hp / e.maxHp);
         bars[nb * 4 + 1] = e.maxShield > 0 ? e.shield / e.maxShield : 0;
-        bars[nb * 4 + 2] = e.boss ? 3 : 1;
+        bars[nb * 4 + 2] = e.boss ? 3 : e.sent ? 1.2 : 1;
         bars[nb * 4 + 3] = 0.95;
         nb++;
       }
@@ -192,10 +225,13 @@ export class EnemyView {
     }
     this.bars.count = nb;
     if (nb) { this.bars.instanceMatrix.needsUpdate = true; this.barAttr.needsUpdate = true; }
+    this.aura.count = na;
+    if (na) this.aura.instanceMatrix.needsUpdate = true;
   }
 
   clear() {
     for (const k of this.kinds.values()) for (const im of k.meshes) im.count = 0;
     this.bars.count = 0;
+    this.aura.count = 0;
   }
 }

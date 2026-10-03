@@ -73,28 +73,32 @@ export const INS = {
 // One-shots are rendered here (OfflineAudioContext = main thread + audio threads) and handed to the
 // DSP host (worker), which normalizes and keeps them for sequencing.
 class Bank {
-  constructor(pool, sr, budget, host) {
-    this.pool = pool; this.sr = sr; this.budget = budget; this.host = host;
+  constructor(pool, sr, budget, host, ctl = null) {
+    this.pool = pool; this.sr = sr; this.budget = budget; this.host = host; this.ctl = ctl;
     this.specs = new Map(); this.done = new Set();
   }
   want([key, sp]) { if (!this.done.has(key) && !this.specs.has(key)) this.specs.set(key, sp); return key; }
-  async renderPending() {
+  async renderPending(onEach) {
     const jobs = [...this.specs.entries()];
     this.specs.clear();
+    let n = 0;
     await Promise.all(jobs.map(async ([key, sp]) => {
       let chs;
       try {
         const buf = await this.pool.run({
-          sr: this.sr, ch: sp.ch, dur: sp.dur, label: key.slice(0, 14),
+          sr: this.sr, ch: sp.ch, dur: sp.dur, label: key.slice(0, 14), ctl: this.ctl,
           build: (ctx, dest) => { const o = gainNode(ctx, 1); o.connect(dest); sp.build(ctx, o, makeRng(hashStr(key))); },
         });
+        if (this.ctl && this.ctl.cancelled) throw new Error('cancelled'); // don't refill a cleared bank
         chs = [];
         for (let c = 0; c < buf.numberOfChannels; c++) chs.push(buf.getChannelData(c).slice());
       } catch (e) {
+        if (this.ctl && this.ctl.cancelled) throw e;
         chs = [new Float32Array(16)];
       }
       await this.host.call('bankPut', { key, chs, norm: sp.norm || null, reverse: !!sp.reverse, sr: this.sr });
       this.done.add(key);
+      if (onEach) onEach(++n / jobs.length);
       await this.budget.tick();
     }));
   }
@@ -174,9 +178,9 @@ function pingPong(ctx, time, fb, lp, out) {
 }
 
 // Bus EQ -> sum, sends -> hall convolver / ping-pong delay, subsonic high-pass on the stem output.
-function mixdownStem(track, stem, bs, n, pool) {
+function mixdownStem(track, stem, bs, n, pool, ctl = null) {
   return pool.run({
-    sr: track.sr, ch: 2, dur: n / track.sr, label: `mix:${track.id}:${stem}`,
+    sr: track.sr, ch: 2, dur: n / track.sr, label: `mix:${track.id}:${stem}`, ctl,
     build: (ctx, dest) => {
       const P = track.mix[stem] || {};
       const sum = gainNode(ctx, 1);
@@ -219,11 +223,24 @@ function mixdownStem(track, stem, bs, n, pool) {
 
 // ------------------------------------------------------------------ track rendering
 // host: DspHost (jobs.js). With `int16`, segments also come back as Int16 PCM for the cache.
-export async function renderTrack(track, pool, budget, log, dsp, int16 = false) {
+// ctl (optional): { cancelled, onProgress(0..1) } - a cancelled render stops at the next stage
+// boundary (queued offline jobs are dropped) and rejects with 'cancelled'.
+export async function renderTrack(track, pool, budget, log, dsp, int16 = false, ctl = null) {
   const T0 = now();
   const sr = track.sr;
   const host = dsp.lane ? dsp.lane(track.id) : dsp; // the track's sample bank lives in one worker
-  const bank = new Bank(pool, sr, budget, host);
+  const check = () => { if (ctl && ctl.cancelled) throw new Error('cancelled'); };
+  const progress = (p) => { if (ctl && ctl.onProgress) { try { ctl.onProgress(p); } catch (e) { /* ignore */ } } };
+  try {
+    return await renderStages(track, pool, budget, log, host, int16, ctl, check, progress, T0, sr);
+  } catch (e) {
+    host.call('bankClear', {}).catch(() => {});
+    throw e;
+  }
+}
+
+async function renderStages(track, pool, budget, log, host, int16, ctl, check, progress, T0, sr) {
+  const bank = new Bank(pool, sr, budget, host, ctl);
   // 1) arrangement
   const arrs = [];
   for (const sec of track.sections) {
@@ -232,9 +249,12 @@ export async function renderTrack(track, pool, budget, log, dsp, int16 = false) 
     arrs.push(X);
     await budget.tick();
   }
+  check();
+  progress(0.02);
   // 2) synthesize all distinct one-shots (and the hall impulse response)
   const nIns = bank.specs.size;
-  await Promise.all([bank.renderPending(), ensureIR(sr, track.ir, host)]);
+  await Promise.all([bank.renderPending((f) => progress(0.02 + 0.43 * f)), ensureIR(sr, track.ir, host)]);
+  check();
   const T1 = now();
   // 3+4) per stem (and part): the worker sequences all sections of the stem onto one timeline
   //    (each section followed by a tail-length gap), then ONE mixdown context renders it.
@@ -249,9 +269,10 @@ export async function renderTrack(track, pool, budget, log, dsp, int16 = false) 
     for (let k = p * per; k < Math.min(arrs.length, (p + 1) * per); k++) ks.push(k);
     if (ks.length) jobs.push({ si, ks });
   }
-  let nextJob = 0;
+  let nextJob = 0, doneJobs = 0;
   const worker = async () => {
     while (nextJob < jobs.length) {
+      check();
       const { si, ks } = jobs[nextJob++];
       const stem = track.stems[si];
       const offs = {};
@@ -265,16 +286,18 @@ export async function renderTrack(track, pool, budget, log, dsp, int16 = false) 
       const busArrays = await host.call('sequence', { sr, total, gain, parts: partList });
       const buses = {};
       for (const name of Object.keys(busArrays)) { buses[name] = bufferOf(busArrays[name], sr); await budget.tick(); }
-      const out = Object.keys(buses).length ? await mixdownStem(track, stem, buses, total, pool) : null;
+      const out = Object.keys(buses).length ? await mixdownStem(track, stem, buses, total, pool, ctl) : null;
       for (const k of ks) {
         raw[k][si] = out ? [out.getChannelData(0).slice(offs[k], offs[k] + slot[k]), out.getChannelData(1).slice(offs[k], offs[k] + slot[k])]
           : [new Float32Array(slot[k]), new Float32Array(slot[k])];
         await budget.tick();
       }
+      progress(0.45 + (0.4 * ++doneJobs) / jobs.length);
     }
   };
   await Promise.all([worker(), worker(), worker()]);
   host.call('bankClear', {});
+  check();
   const T2 = now();
   // 5+6) mastering in the worker: loudness pre-gain, glue compression + soft clip per stem, tail
   //    folding, linked limiter on the stem sum, storage-rate conversion
@@ -293,6 +316,7 @@ export async function renderTrack(track, pool, budget, log, dsp, int16 = false) 
     return { id: sec.id, bars: sec.bars, stems, rates, pcm: s.pcm ? pcm : null, nofold: !!sec.nofold };
   });
   const T3 = now();
+  progress(1);
   if (log) log({ track: track.id, instruments: nIns, loudness: m.loudness.map((x) => +(+x).toFixed(2)), ms: { bank: Math.round(T1 - T0), mix: Math.round(T2 - T1), master: Math.round(T3 - T2), total: Math.round(T3 - T0) } });
   return { id: track.id, bpm: track.bpm, sr, stems: track.stems, segments, next: track.next, first: track.first };
 }

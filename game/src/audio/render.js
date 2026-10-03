@@ -49,11 +49,13 @@ export class RenderPool {
     }
   }
 
-  async exec({ sr, ch, dur, build, label }) {
+  async exec({ sr, ch, dur, build, label, ctl }) {
     if (!OAC) throw new Error('OfflineAudioContext unavailable');
+    if (ctl && ctl.cancelled) throw new Error('cancelled'); // a superseded render: drop queued work
     // graph construction runs on the main thread: never build several graphs in one task. The
     // check must happen right before building (after jobs started earlier have built theirs).
     if (this.budget) { await null; while (this.budget.over) await this.budget.tick(); }
+    if (ctl && ctl.cancelled) throw new Error('cancelled');
     const len = Math.max(256, Math.ceil(dur * sr));
     const ctx = new OAC(ch, len, sr);
     const t0 = now();

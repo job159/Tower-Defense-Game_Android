@@ -226,13 +226,17 @@ export class World {
     for (let r = 0; r < level.rows; r++) for (let c = 0; c < level.cols; c++) {
       if (map.at(c, r) !== TILE.DECOR) continue;
       const { x, z } = tileToWorld(level, c, r);
-      const kind = Math.floor(rand() * 4);
-      const acc = accents[Math.floor(rand() * accents.length)];
+      // versus maps are mirror images: a prop and its twin across the seam get the same (mirrored) model
+      const twin = level.versus && c >= level.half;
+      const pick = level.versus ? mulberry32(level.id * 131 + Math.min(c, level.cols - 1 - c) * 17 + r * 7) : rand;
+      const sx = twin ? -1 : 1;
+      const kind = Math.floor(pick() * 4);
+      const acc = accents[Math.floor(pick() * accents.length)];
       if (kind === 0) {
         // server rack cluster
         for (const [ox, oz, h] of [[-0.2, -0.15, 0.7], [0.18, -0.12, 0.95], [0, 0.22, 0.5]]) {
-          metal.add(box(0.3, h, 0.3), 0x2b3348, [x + ox, h / 2, z + oz]);
-          for (let k = 0; k < 3; k++) glow.add(box(0.31, 0.025, 0.31), acc, [x + ox, 0.15 + k * (h - 0.2) / 3, z + oz]);
+          metal.add(box(0.3, h, 0.3), 0x2b3348, [x + ox * sx, h / 2, z + oz]);
+          for (let k = 0; k < 3; k++) glow.add(box(0.31, 0.025, 0.31), acc, [x + ox * sx, 0.15 + k * (h - 0.2) / 3, z + oz]);
         }
       } else if (kind === 1) {
         // antenna mast with blinking beacon
@@ -250,10 +254,10 @@ export class World {
         metal.add(cyl(0.12, 0.22, 0.12, 10), 0x5a6480, [x, 0.9, z]);
       } else {
         // cargo crates + holo sign
-        metal.add(box(0.42, 0.34, 0.42), 0x3a3230, [x - 0.12, 0.17, z + 0.1], [0, 0.3, 0]);
-        metal.add(box(0.3, 0.26, 0.3), 0x2f3a45, [x + 0.2, 0.13, z - 0.18], [0, -0.2, 0]);
-        metal.add(box(0.28, 0.24, 0.28), 0x3a3230, [x - 0.1, 0.46, z + 0.08], [0, 0.6, 0]);
-        glow.add(box(0.43, 0.02, 0.43), COLORS.orange, [x - 0.12, 0.3, z + 0.1], [0, 0.3, 0]);
+        metal.add(box(0.42, 0.34, 0.42), 0x3a3230, [x - 0.12 * sx, 0.17, z + 0.1], [0, 0.3 * sx, 0]);
+        metal.add(box(0.3, 0.26, 0.3), 0x2f3a45, [x + 0.2 * sx, 0.13, z - 0.18], [0, -0.2 * sx, 0]);
+        metal.add(box(0.28, 0.24, 0.28), 0x3a3230, [x - 0.1 * sx, 0.46, z + 0.08], [0, 0.6 * sx, 0]);
+        glow.add(box(0.43, 0.02, 0.43), COLORS.orange, [x - 0.12 * sx, 0.3, z + 0.1], [0, 0.3 * sx, 0]);
       }
     }
     const mg = metal.build(), gg = glow.build();
@@ -535,7 +539,8 @@ export class World {
     this.add(new THREE.Mesh(gl.build(), glowVertexMat(2.2)));
     // under-glow plane so the platform reads as floating
     const glow = new THREE.Mesh(new THREE.PlaneGeometry(level.cols + 6, level.rows + 6), new THREE.MeshBasicMaterial({
-      map: glowTexture(), color: new THREE.Color(0x5a2cff).multiplyScalar(0.6), ...additive,
+      // a versus map may tint it with its identity colour
+      map: glowTexture(), color: new THREE.Color(level.glow ?? 0x5a2cff).multiplyScalar(0.6), ...additive,
     }));
     glow.rotation.x = -Math.PI / 2;
     glow.position.y = -3.5;

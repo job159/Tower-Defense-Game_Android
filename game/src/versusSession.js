@@ -2,25 +2,27 @@
 // The opponent is either a local AI (its own VersusGame driven by VersusBot) or a network mirror (see
 // net/remoteSide.js); both expose the same lists so the view renders them alike.
 import { Session } from './session.js';
-import { VersusGame, PACK_BY_ID, DEFAULT_VS_LOADOUT } from './core/versus.js';
+import { VersusGame, PACK_BY_ID, DEFAULT_VS_LOADOUT, getVersusMap, mapIdForSeed } from './core/versus.js';
 import { VersusBot } from './core/versusBot.js';
 import { VersusHud } from './ui/versusHud.js';
 import { vibrate } from './audio/audio.js';
 
 export class VersusSession extends Session {
-  // opts: { mode: 'ai' | 'online', seed, loadout, oppName,
+  // opts: { mode: 'ai' | 'online', seed, map (versus map id; both players use the same), loadout, oppName,
   //         ai: { level, style, loadout } | online: { room, remote } }
   constructor(app, opts) {
     const seed = opts.seed ?? Math.floor(Math.random() * 1e6);
-    const game = new VersusGame({ side: 0, seed, loadout: opts.loadout || DEFAULT_VS_LOADOUT, variant: seed });
+    const map = getVersusMap(opts.map ?? mapIdForSeed(seed));
+    const game = new VersusGame({ side: 0, seed, loadout: opts.loadout || DEFAULT_VS_LOADOUT, variant: seed, map });
     super(app, game.level, { ...opts, game, hudClass: VersusHud });
     this.versus = true;
     this.mode = opts.mode;
     this.seed = seed;
+    this.map = map;
     this.elapsed = 0;
     if (opts.mode === 'ai') {
       const ai = opts.ai || {};
-      this.opp = new VersusGame({ side: 1, seed, loadout: ai.loadout || DEFAULT_VS_LOADOUT, variant: seed });
+      this.opp = new VersusGame({ side: 1, seed, loadout: ai.loadout || DEFAULT_VS_LOADOUT, variant: seed, map });
       this.bot = new VersusBot(this.opp, { level: ai.level || 'normal', style: ai.style || 'balanced', seed });
     } else {
       this.opp = opts.online.remote;
@@ -29,6 +31,7 @@ export class VersusSession extends Session {
     }
     this.view.addSource(this.opp);
     this.hud.toast(opts.mode === 'ai' ? '練習對戰開始！派兵可以提高收入' : '對戰開始！', 2600);
+    this.hud.mapIntro(map);
   }
 
   resize() {

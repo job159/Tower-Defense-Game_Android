@@ -11,7 +11,7 @@ const DEFAULT = () => ({
   endless: {},           // map id -> best wave
   research: {},          // research id -> level
   loadouts: {},          // level id -> [tower types]
-  settings: { quality: 'auto', sfx: 0.8, music: 0.6, vibrate: true },
+  settings: { quality: 'auto', sfx: 0.8, music: 0.6, vibrate: true, bgm: 'auto' }, // bgm: 'auto' | 'random' | track id
   tutorial: false,
   run: null,             // snapshot of an unfinished game (taken at wave start)
   seenEnemies: [],
@@ -25,6 +25,7 @@ export class Save {
       if (raw) {
         const d = JSON.parse(raw);
         this.data = { ...DEFAULT(), ...d, v: 2, settings: { ...DEFAULT().settings, ...(d.settings || {}) } };
+        if (typeof this.data.settings.bgm !== 'string') this.data.settings.bgm = 'auto'; // unknown ids fall back to auto in the audio engine
         // snapshots from v1 can't be resumed by the v2 simulation
         if (this.data.run && this.data.run.v !== 2) this.data.run = null;
         // research costs changed in v2: if old allocations now exceed the stars earned, refund them

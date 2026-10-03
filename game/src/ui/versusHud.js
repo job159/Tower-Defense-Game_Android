@@ -64,8 +64,9 @@ export class VersusHud extends Hud {
   }
 
   packInfo(p) {
-    const d = ENEMIES[p.type];
-    this.hint(`<b>${d.name} ×${p.count}</b>　花費 ${p.cost}　收入 +${p.eco}/${VS_RULES.incomeEvery}秒<br>${PACK_TIPS[p.id] || d.desc}`, 3200);
+    const d = ENEMIES[p.type], s = VS_RULES.sent;
+    this.hint(`<b>${d.name} ×${p.count}</b>　花費 ${p.cost}　收入 +${p.eco}/${VS_RULES.incomeEvery}秒<br>${PACK_TIPS[p.id] || d.desc}`
+      + `<br><span style="color:#ff6bd5">精英：生命 ×${s.hp}・護甲 +${s.armor}・速度 +${Math.round((s.speed - 1) * 100)}%</span>`, 3600);
   }
 
   waveText(g) {
@@ -138,6 +139,17 @@ export class VersusHud extends Hud {
     b.classList.add('fired');
     const r = b.getBoundingClientRect(), root = this.root.getBoundingClientRect();
     this.float(r.left - root.left + r.width / 2, r.top - root.top - 6, `收入 +${p.eco}`, 'gold');
+  }
+
+  // match start: the map both players were dealt (a random one each match)
+  mapIntro(lv) {
+    const b = h('div', { class: 'banner vs-map' },
+      h('div', { class: 'b0' }, '對戰地圖'),
+      h('div', { class: 'b1' }, lv.name),
+      h('div', { class: 'b2' }, lv.en),
+      lv.desc ? h('div', { class: 'b3' }, lv.desc) : null);
+    this.root.append(b);
+    setTimeout(() => b.remove(), 3500);
   }
 }
 
